@@ -5,24 +5,15 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, CalendarDays, Check, Clock3, Cpu, MapPin, Monitor, MonitorCog, ShieldCheck } from "lucide-react";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 
-import { getClub, requestJson } from "@/lib/api";
-import type { Computer } from "@/types/api";
+import { apiBase, getClub, requestJson } from "@/lib/api";
+import { clubDate, clubLocalToIso, nextClubDate } from "@/lib/club-time";
+import type { ClubPriceMenu, Computer } from "@/types/api";
 
 type Quote = { total_price: string; currency: string };
 type Booking = { id: string };
-
-function localDate(value: Date) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function localIso(date: string, time: string) {
-  return new Date(`${date}T${time}:00`).toISOString();
-}
+type Availability = { computers: Array<{ computer_id: string; busy: Array<{ start_time: string; end_time: string }> }> };
 
 function subscribeToSession(callback: () => void) {
   window.addEventListener("storage", callback);
@@ -34,14 +25,44 @@ function hasActiveSession() {
 }
 
 function ComputerRow({ computer, selected, onSelect }: { computer: Computer; selected: boolean; onSelect: () => void }) {
-  const available = computer.is_active && computer.status === "AVAILABLE";
-  return <button type="button" className={`computer-row${selected ? " computer-selected" : ""}`} onClick={onSelect} disabled={!available} aria-pressed={selected}>
+  const selectable = computer.is_active && !["MAINTENANCE", "DISABLED"].includes(computer.status);
+  return <button type="button" className={`computer-row${selected ? " computer-selected" : ""}`} onClick={onSelect} disabled={!selectable} aria-pressed={selected}>
     <span className="computer-radio">{selected && <Check size={13} />}</span>
     <span className="computer-main"><strong>{computer.name}</strong><small>{computer.gpu} · {computer.ram_gb} GB RAM</small></span>
     <span className="computer-sub"><Cpu size={13} />{computer.cpu}</span>
     <span className="computer-sub"><Monitor size={13} />{computer.refresh_rate} Hz</span>
-    <span className={`computer-status ${available ? "is-available" : ""}`}>{available ? "Available" : computer.status.toLowerCase()}</span>
+    <span className={`computer-status ${computer.status === "AVAILABLE" ? "is-available" : ""}`}>{computer.status === "AVAILABLE" ? "Available now" : computer.status === "OCCUPIED" ? "Occupied now" : computer.status.toLowerCase()}</span>
   </button>;
+}
+
+function PricePeriod({ label, pricing, currency }: {
+  label: string;
+  pricing: ClubPriceMenu["tiers"][number]["weekdays"];
+  currency: string;
+}) {
+  const amount = (value: number) => `${value.toLocaleString("ru-RU")} ${currency}`;
+  return <div className="bro-price-period">
+    <h3>{label}</h3>
+    <div className="bro-price-day"><span>День · {pricing.day_hours}</span><strong>{amount(pricing.day_price)}</strong></div>
+    <div className="bro-price-line"><span>1 час</span><strong>{amount(pricing.hourly)}</strong></div>
+    <div className="bro-price-deals">{pricing.deals.map((deal) => <span key={deal.label}>{deal.label} <strong>{amount(deal.price)}</strong></span>)}</div>
+    <div className="bro-price-line"><span>Ночь · {pricing.night_hours}</span><strong>{amount(pricing.night_price)}</strong></div>
+    <div className="bro-price-line"><span>Турбо ночь · {pricing.turbo_hours}</span><strong>{amount(pricing.turbo_price)}</strong></div>
+  </div>;
+}
+
+function ClubPriceMenuView({ menu }: { menu: ClubPriceMenu }) {
+  return <section className="bro-price-menu">
+    <div className="bro-price-heading"><div><div className="eyebrow">BRO · PRICE LIST</div><h2>Прайс клуба</h2></div><span>Цены в {menu.currency}</span></div>
+    <div className="bro-price-tiers">{menu.tiers.map((tier) => <article className="bro-price-tier" key={tier.name}>
+      <h3>{tier.name}</h3>
+      <div className="bro-price-periods">
+        <PricePeriod label="Будни" pricing={tier.weekdays} currency={menu.currency} />
+        <PricePeriod label="Выходные" pricing={tier.weekends} currency={menu.currency} />
+      </div>
+    </article>)}</div>
+    <p className="bro-price-note">{menu.holiday_note} · «2+1» и «3+2» — стоимость пакета.</p>
+  </section>;
 }
 
 export function ClubDetail({ clubId }: { clubId: string }) {
@@ -49,22 +70,53 @@ export function ClubDetail({ clubId }: { clubId: string }) {
   const clubQuery = useQuery({ queryKey: ["club", clubId], queryFn: () => getClub(clubId) });
   const club = clubQuery.data;
   const [computerId, setComputerId] = useState("");
-  const [sessionDate, setSessionDate] = useState(() => localDate(new Date(Date.now() + 86_400_000)));
+  const [sessionDate, setSessionDate] = useState("");
+  const [today] = useState(() => new Date());
   const [startTime, setStartTime] = useState("18:00");
   const [endTime, setEndTime] = useState("20:00");
   const signedIn = useSyncExternalStore(subscribeToSession, hasActiveSession, () => false);
+  const clubTimezone = club?.timezone;
+  const todayAtClub = clubTimezone ? clubDate(today, clubTimezone) : "";
 
-  const interval = useMemo(() => {
-    if (!sessionDate || !startTime || !endTime || startTime >= endTime) return null;
-    const start = localIso(sessionDate, startTime);
-    const end = localIso(sessionDate, endTime);
-    return { start_time: start, end_time: end };
-  }, [sessionDate, startTime, endTime]);
+  const selection = (() => {
+    if (!clubTimezone || !sessionDate || !startTime || !endTime || startTime >= endTime) return { interval: null, error: null };
+    try {
+      return { interval: {
+        start_time: clubLocalToIso(sessionDate, startTime, clubTimezone),
+        end_time: clubLocalToIso(sessionDate, endTime, clubTimezone),
+      }, error: null };
+    } catch (error) {
+      return { interval: null, error: error instanceof Error ? error.message : "Invalid club time." };
+    }
+  })();
+  const interval = selection.interval;
+  const dayRange = (() => {
+    if (!clubTimezone || !sessionDate) return null;
+    try {
+      return {
+        start_time: clubLocalToIso(sessionDate, "00:00", clubTimezone),
+        end_time: clubLocalToIso(nextClubDate(sessionDate), "00:00", clubTimezone),
+      };
+    } catch { return null; }
+  })();
+  const availabilityQuery = useQuery({
+    queryKey: ["club-availability", clubId, dayRange],
+    queryFn: async () => {
+      const params = new URLSearchParams(dayRange!);
+      const response = await fetch(`${apiBase}/clubs/${clubId}/availability?${params}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Could not load this club's reservations.");
+      return response.json() as Promise<Availability>;
+    },
+    enabled: Boolean(dayRange),
+    refetchInterval: 30_000,
+  });
+  const busy = availabilityQuery.data?.computers.find((computer) => computer.computer_id === computerId)?.busy ?? [];
+  const hasConflict = Boolean(interval && busy.some((slot) => Date.parse(slot.start_time) < Date.parse(interval.end_time) && Date.parse(slot.end_time) > Date.parse(interval.start_time)));
 
   const quoteQuery = useQuery({
     queryKey: ["booking-quote", computerId, interval],
     queryFn: () => requestJson<Quote>("/bookings/quote", { computer_id: computerId, ...interval }),
-    enabled: Boolean(computerId && interval),
+    enabled: Boolean(computerId && interval && !hasConflict),
     retry: false,
   });
 
@@ -91,23 +143,35 @@ export function ClubDetail({ clubId }: { clubId: string }) {
       <div className="club-facts"><span><ShieldCheck size={15} /> {availableComputers.length} PCs listed available</span><span><MonitorCog size={15} /> {club.computers.length} gaming stations</span><span><Clock3 size={15} /> Open daily</span><span>{club.phone}</span></div>
     </section>
 
-    <section className="club-workspace">
+    {club.price_menu?.tiers?.length > 0 && <ClubPriceMenuView menu={club.price_menu} />}
+
+    {club.computers.length > 0 ? <section className="club-workspace">
       <div className="hardware-column"><div className="workspace-heading"><div><div className="eyebrow">CHOOSE YOUR STATION</div><h2>Find your rig.</h2></div><span>{availableComputers.length} available</span></div>
         <div className="computer-list">{club.computers.map((computer) => <ComputerRow key={computer.id} computer={computer} selected={computer.id === computerId} onSelect={() => setComputerId(computer.id)} />)}</div>
         <div className="tariff-list"><div className="eyebrow">HOURLY TARIFFS</div>{club.tariffs.map((tariff) => <div className="tariff-row" key={tariff.id}><span>{tariff.name}</span><span>{tariff.start_time.slice(0, 5)}–{tariff.end_time.slice(0, 5)}</span><strong>{Number(tariff.price_per_hour).toLocaleString("en-US")} KZT / HR</strong></div>)}</div>
       </div>
 
       <aside className="booking-panel"><div className="eyebrow">MAKE IT A SESSION <span>01 / 03</span></div><h2>Book a station.</h2><p className="booking-intro">Choose a time and we’ll calculate the exact price from the club’s tariffs.</p>
-        <label className="booking-label">DATE<div className="input-wrap"><CalendarDays size={16} /><input type="date" min={localDate(new Date())} value={sessionDate} onChange={(event) => setSessionDate(event.target.value)} /></div></label>
+        <label className="booking-label">DATE · {club.timezone}<div className="input-wrap"><CalendarDays size={16} /><input type="date" min={todayAtClub} value={sessionDate} onChange={(event) => setSessionDate(event.target.value)} /></div></label>
         <div className="time-grid"><label className="booking-label">START<div className="input-wrap"><Clock3 size={15} /><input type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} /></div></label><label className="booking-label">END<div className="input-wrap"><Clock3 size={15} /><input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} /></div></label></div>
         <label className="booking-label">COMPUTER<div className="selected-computer">{selectedComputer ? <><span>{selectedComputer.name}</span><small>{selectedComputer.gpu}</small></> : <span>Select a computer from the list</span>}</div></label>
+        {selectedComputer && <div className="staff-availability"><div className="eyebrow">RESERVED · {sessionDate || "CHOOSE DATE"}</div>
+          {!sessionDate && <p>Choose a date to see reservations.</p>}
+          {sessionDate && !dayRange && <p className="form-error">This date cannot be shown in the club time zone.</p>}
+          {dayRange && availabilityQuery.isPending && <p>Loading reservations...</p>}
+          {availabilityQuery.isError && <p className="form-error">{availabilityQuery.error.message}</p>}
+          {availabilityQuery.isSuccess && busy.length === 0 && <p>No reservations on this date.</p>}
+          {busy.map((slot, index) => <div className="staff-busy-slot" key={`${slot.start_time}-${index}`}><span>{new Date(slot.start_time).toLocaleTimeString("en-US", { timeZone: club.timezone, hour: "2-digit", minute: "2-digit" })}–{new Date(slot.end_time).toLocaleTimeString("en-US", { timeZone: club.timezone, hour: "2-digit", minute: "2-digit" })}</span><strong>Reserved</strong></div>)}
+        </div>}
         <div className="quote-row"><span>Estimated total</span><strong>{quoteQuery.isFetching ? "Calculating..." : quoteQuery.data ? `${Number(quoteQuery.data.total_price).toLocaleString("en-US")} ${quoteQuery.data.currency}` : "— KZT"}</strong></div>
+        {selection.error && <p className="form-error" role="alert">{selection.error}</p>}
+        {hasConflict && <p className="form-error" role="alert">This station is reserved during the selected time.</p>}
         {quoteQuery.isError && <p className="form-error" role="alert">{quoteQuery.error.message}</p>}
         {bookingMutation.isError && <p className="form-error" role="alert">{bookingMutation.error.message}</p>}
         {!interval && <p className="form-hint">Choose a future date and a valid same-day time range.</p>}
-        <button className="confirm-booking" type="button" disabled={!computerId || !interval || quoteQuery.isError || !quoteQuery.data || bookingMutation.isPending} onClick={() => bookingMutation.mutate()}>{bookingMutation.isPending ? "Confirming..." : signedIn ? "Confirm booking" : "Sign in to book"}<ArrowRight size={16} /></button>
+        <button className="confirm-booking" type="button" disabled={!computerId || !interval || hasConflict || quoteQuery.isError || !quoteQuery.data || bookingMutation.isPending} onClick={() => bookingMutation.mutate()}>{bookingMutation.isPending ? "Confirming..." : signedIn ? "Confirm booking" : "Sign in to book"}<ArrowRight size={16} /></button>
         {!signedIn && <p className="auth-hint">You’ll need an account to confirm your booking. <Link href="/login">Sign in</Link></p>}
       </aside>
-    </section>
+    </section> : <section className="bro-empty-hardware"><MonitorCog size={24} /><div><strong>Список компьютеров скоро появится</strong><span>Свяжитесь с клубом, чтобы уточнить свободные места.</span></div></section>}
   </main>;
 }

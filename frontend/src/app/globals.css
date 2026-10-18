@@ -90,4 +90,23 @@ h2 { font-size: clamp(28px, 3.1vw, 42px); line-height: 1.08; margin: 13px 0 0; f
 .staff-busy-slot { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-top:1px solid #394239; font-size:10px; }
 .staff-busy-slot strong { color:#f2aa90; font-size:9px; }
 .staff-row-actions { display:flex; flex-wrap:wrap; gap:5px; }
+.role-table td form { display:flex; align-items:center; gap:6px; }
+.role-table td input[name="timezone"] { width:130px; padding:7px; border:1px solid #515b4f; color:var(--paper); background:#1b211c; font-size:9px; }
+.bro-price-menu { max-width:1240px; padding:0 clamp(18px,4vw,58px); margin:24px auto 12px; }
+.bro-price-heading { display:flex; justify-content:space-between; align-items:end; gap:15px; margin-bottom:14px; }
+.bro-price-heading .eyebrow { color:#14d8d0; }.bro-price-heading h2 { margin:7px 0 0; color:var(--white); font-size:26px; }.bro-price-heading>span { color:#a9b2aa; font-size:10px; }
+.bro-price-tiers { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.bro-price-tier { overflow:hidden; border:1px solid #45514c; border-radius:14px; background:linear-gradient(145deg,#242c2b,#171c1d); }
+.bro-price-tier>h3 { margin:0; padding:13px 16px; color:#071414; background:linear-gradient(100deg,#1ce6dd,#05bdb2); font-family:var(--font-code); font-size:17px; letter-spacing:.08em; }
+.bro-price-periods { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+.bro-price-period { padding:15px; }.bro-price-period+ .bro-price-period { border-left:1px solid #46504c; }
+.bro-price-period>h3 { margin:0 0 12px; color:#1ce6dd; font-size:14px; }
+.bro-price-day,.bro-price-line,.bro-price-deals { display:flex; justify-content:space-between; align-items:center; gap:9px; padding:8px 0; border-top:1px solid #3f4945; color:#d9ded9; font-size:10px; }
+.bro-price-day strong,.bro-price-line strong,.bro-price-deals strong { color:#36e5dc; font-size:11px; white-space:nowrap; }
+.bro-price-deals { align-items:flex-start; flex-direction:column; gap:4px; }.bro-price-deals span { display:flex; justify-content:space-between; width:100%; }
+.bro-price-note { margin:10px 0 0; color:#9da79f; font-size:9px; text-align:right; }
+.bro-empty-hardware { max-width:1124px; margin:25px auto 70px; padding:22px; display:flex; align-items:center; gap:14px; border:1px solid #414a40; color:#1ce6dd; }
+.bro-empty-hardware>div { display:grid; gap:5px; }.bro-empty-hardware strong { color:var(--white); font-size:12px; }.bro-empty-hardware span { color:#a2aca0; font-size:10px; }
 @media (max-width:720px) { .staff-booking-grid { grid-template-columns:1fr; } }
+@media (max-width:850px) { .bro-price-tiers { grid-template-columns:1fr; } }
+@media (max-width:580px) { .bro-price-periods { grid-template-columns:1fr; }.bro-price-period+.bro-price-period { border-left:0; border-top:1px solid #46504c; }.bro-price-heading h2 { font-size:21px; }.bro-price-day,.bro-price-line { font-size:9px; } }

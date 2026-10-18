@@ -13,10 +13,10 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import Base, Booking, BookingSource, BookingStatus, Club, Computer, ComputerStatus, Session, StaffAssignment, Tariff, User, UserRole
-from app.schemas import BookingCreate, SessionExtend, WalkInCreate
+from app.schemas import BookingCreate, ClubUpdate, ComputerStatusUpdate, ComputerUpdate, SessionExtend, WalkInCreate
 from app.services.bookings import club_availability, create_booking, create_walk_in
 from app.services.errors import ServiceError
-from app.services.role_workflows import staff_session_action
+from app.services.role_workflows import owner_update_computer_status, staff_session_action, update_club, update_computer
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not TEST_DATABASE_URL, reason="Set TEST_DATABASE_URL to a disposable PostgreSQL database")
@@ -162,5 +162,76 @@ async def test_overdue_session_blocks_new_booking_until_staff_ends_it() -> None:
             created = await create_booking(db, await db.get(User, player_id), BookingCreate(
                 computer_id=computer_id, start_time=minute_after(10), end_time=minute_after(30)))
             assert created.status == BookingStatus.CONFIRMED
+
+    await run_race(scenario)
+
+
+@pytest.mark.asyncio
+async def test_five_minute_extension_is_priced() -> None:
+    async def scenario(sessions, ids):
+        _, staff_id, _, _, computer_id = ids
+        async with sessions() as db:
+            active = await create_walk_in(db, await db.get(User, staff_id), WalkInCreate(
+                computer_id=computer_id, guest_name="Guest", end_time=minute_after(30)))
+        extended_end = active.end_time + timedelta(minutes=5)
+        async with sessions() as db:
+            extended = await staff_session_action(db, await db.get(User, staff_id), active.id, "extend",
+                                                  SessionExtend(end_time=extended_end))
+            assert extended.end_time == extended_end
+            assert extended.total_price == active.total_price + Decimal("50.00")
+
+    await run_race(scenario)
+
+
+@pytest.mark.asyncio
+async def test_disabling_computer_races_with_online_booking() -> None:
+    async def scenario(sessions, ids):
+        owner_id, _, player_id, _, computer_id = ids
+
+        async def disable():
+            async with sessions() as db:
+                return await update_computer(db, await db.get(User, owner_id), computer_id,
+                                             ComputerUpdate(is_active=False))
+
+        async def online():
+            async with sessions() as db:
+                return await create_booking(db, await db.get(User, player_id), BookingCreate(
+                    computer_id=computer_id, start_time=minute_after(30), end_time=minute_after(90)))
+
+        results = await asyncio.gather(disable(), online(), return_exceptions=True)
+        assert sum(not isinstance(result, Exception) for result in results) == 1
+        assert [result.code for result in results if isinstance(result, ServiceError)] in (
+            ["COMPUTER_HAS_BOOKINGS"], ["COMPUTER_UNAVAILABLE"])
+
+    await run_race(scenario)
+
+
+@pytest.mark.asyncio
+async def test_booked_computer_cannot_enter_maintenance() -> None:
+    async def scenario(sessions, ids):
+        owner_id, _, player_id, _, computer_id = ids
+        async with sessions() as db:
+            await create_booking(db, await db.get(User, player_id), BookingCreate(
+                computer_id=computer_id, start_time=minute_after(30), end_time=minute_after(90)))
+        async with sessions() as db:
+            with pytest.raises(ServiceError) as error:
+                await owner_update_computer_status(db, await db.get(User, owner_id), computer_id,
+                                                   ComputerStatusUpdate(status=ComputerStatus.MAINTENANCE))
+            assert error.value.code == "COMPUTER_HAS_BOOKINGS"
+
+    await run_race(scenario)
+
+
+@pytest.mark.asyncio
+async def test_club_timezone_change_is_blocked_by_upcoming_booking() -> None:
+    async def scenario(sessions, ids):
+        owner_id, _, player_id, club_id, computer_id = ids
+        async with sessions() as db:
+            await create_booking(db, await db.get(User, player_id), BookingCreate(
+                computer_id=computer_id, start_time=minute_after(30), end_time=minute_after(90)))
+        async with sessions() as db:
+            with pytest.raises(ServiceError) as error:
+                await update_club(db, await db.get(User, owner_id), club_id, ClubUpdate(timezone="Asia/Oral"))
+            assert error.value.code == "CLUB_HAS_BOOKINGS"
 
     await run_race(scenario)

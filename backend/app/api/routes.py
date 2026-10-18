@@ -12,6 +12,7 @@ from app.models import Booking, Club, Computer, Tariff, User
 from app.core.config import get_settings
 from app.schemas import AccessToken, BookingCreate, BookingQuoteResponse, BookingResponse, ClubAvailability, ClubPage, ClubResponse, UserCreate, UserLogin, UserResponse
 from app.services import auth, bookings
+from app.services.errors import ServiceError
 
 router = APIRouter()
 
@@ -34,9 +35,8 @@ async def login(payload: UserLogin, response: Response, session: AsyncSession = 
 async def refresh(request: Request, response: Response, session: AsyncSession = Depends(get_session)) -> AccessToken:
     token = request.cookies.get("cyberbook_refresh")
     if not token:
-        from app.services.errors import ServiceError
-
         raise ServiceError("INVALID_REFRESH_TOKEN", "The refresh token is invalid or expired.", 401)
+    _require_trusted_cookie_origin(request)
     tokens = await auth.refresh(session, token)
     _set_refresh_cookie(response, tokens.refresh_token)
     return AccessToken(access_token=tokens.access_token)
@@ -46,8 +46,17 @@ async def refresh(request: Request, response: Response, session: AsyncSession = 
 async def logout(request: Request, response: Response, session: AsyncSession = Depends(get_session)) -> None:
     token = request.cookies.get("cyberbook_refresh")
     if token:
+        _require_trusted_cookie_origin(request)
         await auth.logout(session, token)
     response.delete_cookie("cyberbook_refresh", path="/api/v1/auth", httponly=True, samesite="lax")
+
+
+def _require_trusted_cookie_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    trusted = {value.rstrip("/") for value in get_settings().allowed_origins}
+    trusted.add(str(request.base_url).rstrip("/"))
+    if origin not in trusted:
+        raise ServiceError("UNTRUSTED_ORIGIN", "Refresh-cookie requests require a trusted Origin header.", 403)
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:

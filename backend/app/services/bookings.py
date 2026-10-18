@@ -9,7 +9,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.models import Booking, BookingSource, BookingStatus, Club, Computer, ComputerStatus, Session, StaffAssignment, User, UserRole
 from app.schemas import BookingCreate, BusyInterval, ClubAvailability, ComputerAvailability, SessionExtend, WalkInCreate
 from app.services.errors import ServiceError
-from app.services.pricing import calculate_price
+from app.services.pricing import calculate_interval_price, calculate_price
 from app.services.transitions import transition_booking
 
 ACTIVE_STATUSES = (BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE)
@@ -76,7 +76,7 @@ async def quote_booking(session: AsyncSession, payload: BookingCreate):
         raise ServiceError("COMPUTER_UNAVAILABLE", "The selected computer is not available for booking.", 409)
     await _ensure_no_overdue_session(session, computer.id)
     await _ensure_interval_available(session, computer.id, payload.start_time, payload.end_time)
-    return calculate_price(payload.start_time, payload.end_time, club.tariffs)
+    return calculate_price(payload.start_time, payload.end_time, club.tariffs, club.timezone)
 
 
 async def create_booking(session: AsyncSession, user: User, payload: BookingCreate) -> Booking:
@@ -91,7 +91,7 @@ async def create_booking(session: AsyncSession, user: User, payload: BookingCrea
     )
     if computer is None:
         raise ServiceError("COMPUTER_NOT_FOUND", "The selected computer was not found.", 404)
-    club = await session.scalar(select(Club).where(Club.id == computer.club_id).options(selectinload(Club.tariffs)))
+    club = await session.scalar(select(Club).where(Club.id == computer.club_id).options(selectinload(Club.tariffs)).with_for_update(of=Club))
     if club is None:
         raise ServiceError("CLUB_NOT_FOUND", "The selected computer's club was not found.", 404)
     if not computer.is_active or not club.is_active or computer.status == ComputerStatus.DISABLED:
@@ -102,7 +102,7 @@ async def create_booking(session: AsyncSession, user: User, payload: BookingCrea
 
     await _ensure_interval_available(session, computer.id, payload.start_time, payload.end_time)
 
-    price = calculate_price(payload.start_time, payload.end_time, club.tariffs)
+    price = calculate_price(payload.start_time, payload.end_time, club.tariffs, club.timezone)
     booking = Booking(
         user_id=user.id,
         source=BookingSource.ONLINE,
@@ -133,12 +133,12 @@ async def create_walk_in(session: AsyncSession, staff: User, payload: WalkInCrea
     ))
     if assigned is None:
         raise ServiceError("FORBIDDEN", "You are not assigned to this club.", 403)
-    club = await session.scalar(select(Club).where(Club.id == computer.club_id).options(selectinload(Club.tariffs)))
+    club = await session.scalar(select(Club).where(Club.id == computer.club_id).options(selectinload(Club.tariffs)).with_for_update(of=Club))
     if club is None or not club.is_active or not computer.is_active or computer.status != ComputerStatus.AVAILABLE:
         raise ServiceError("COMPUTER_UNAVAILABLE", "This computer cannot start a walk-in session.", 409)
     if payload.end_time <= now:
         raise ServiceError("INVALID_BOOKING_TIME", "The session must end in the future.", 422)
-    price = calculate_price(start, payload.end_time, club.tariffs)
+    price = calculate_price(start, payload.end_time, club.tariffs, club.timezone)
     await _ensure_interval_available(session, computer.id, start, payload.end_time)
     booking = Booking(
         user_id=None, guest_name=payload.guest_name, source=BookingSource.WALK_IN,
@@ -179,13 +179,13 @@ async def extend_session(session: AsyncSession, booking: Booking, payload: Sessi
     actual = await session.scalar(select(Session).where(Session.booking_id == booking.id).with_for_update())
     if actual is None or actual.ended_at is not None:
         raise ServiceError("SESSION_NOT_ACTIVE", "The session has already ended.", 409)
-    club = await session.scalar(select(Club).where(Club.id == booking.computer.club_id).options(selectinload(Club.tariffs)))
+    club = await session.scalar(select(Club).where(Club.id == booking.computer.club_id).options(selectinload(Club.tariffs)).with_for_update(of=Club))
     if club is None or not club.is_active:
         raise ServiceError("CLUB_NOT_FOUND", "The club is unavailable.", 409)
     if payload.end_time - booking.start_time > timedelta(hours=8):
         raise ServiceError("INVALID_BOOKING_DURATION", "A session cannot exceed eight hours.", 422)
     # Keep the original quoted amount even if the club has since changed tariffs.
-    extension_price = calculate_price(booking.end_time, payload.end_time, club.tariffs)
+    extension_price = calculate_interval_price(booking.end_time, payload.end_time, club.tariffs, club.timezone)
     await _ensure_interval_available(session, booking.computer_id, booking.start_time, payload.end_time, booking.id)
     booking.end_time = payload.end_time
     booking.total_price += extension_price

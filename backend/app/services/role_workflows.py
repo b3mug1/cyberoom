@@ -56,8 +56,11 @@ def _today_end() -> datetime:
     return _today_start() + timedelta(days=1)
 
 
-async def _owned_club(session: AsyncSession, owner: User, club_id: uuid.UUID) -> Club:
-    club = await session.scalar(select(Club).where(Club.id == club_id, Club.owner_id == owner.id))
+async def _owned_club(session: AsyncSession, owner: User, club_id: uuid.UUID, lock: bool = False) -> Club:
+    query = select(Club).where(Club.id == club_id, Club.owner_id == owner.id)
+    if lock:
+        query = query.with_for_update(of=Club)
+    club = await session.scalar(query)
     if club is None:
         raise ServiceError("CLUB_NOT_FOUND", "Club not found in your account.", 404)
     return club
@@ -88,6 +91,16 @@ async def _ensure_no_active_session(session: AsyncSession, computer_id: uuid.UUI
     ))
     if active is not None:
         raise ServiceError("SESSION_ACTIVE", "End the active session before changing this computer's status.", 409)
+
+
+async def _ensure_no_live_booking(session: AsyncSession, computer_id: uuid.UUID) -> None:
+    booking = await session.scalar(select(Booking.id).where(
+        Booking.computer_id == computer_id,
+        Booking.status.in_(ACTIVE_BOOKING_STATUSES),
+        (Booking.status == BookingStatus.ACTIVE) | (Booking.end_time > datetime.now(timezone.utc)),
+    ))
+    if booking is not None:
+        raise ServiceError("COMPUTER_HAS_BOOKINGS", "Resolve active and upcoming bookings before changing this computer.", 409)
 
 
 async def _staff_club_ids(session: AsyncSession, staff: User) -> list[uuid.UUID]:
@@ -189,8 +202,19 @@ async def create_club(session: AsyncSession, owner: User, payload: ClubCreate) -
 
 
 async def update_club(session: AsyncSession, owner: User, club_id: uuid.UUID, payload: ClubUpdate) -> Club:
-    club = await _owned_club(session, owner, club_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    club = await _owned_club(session, owner, club_id, lock=True)
+    changes = payload.model_dump(exclude_unset=True)
+    if "timezone" in changes and changes["timezone"] != club.timezone:
+        upcoming = await session.scalar(
+            select(Booking.id).join(Computer, Booking.computer_id == Computer.id).where(
+                Computer.club_id == club.id,
+                Booking.status.in_(ACTIVE_BOOKING_STATUSES),
+                (Booking.status == BookingStatus.ACTIVE) | (Booking.end_time > datetime.now(timezone.utc)),
+            )
+        )
+        if upcoming is not None:
+            raise ServiceError("CLUB_HAS_BOOKINGS", "Resolve active and upcoming bookings before changing the club time zone.", 409)
+    for key, value in changes.items():
         setattr(club, key, value)
     await session.commit()
     await session.refresh(club)
@@ -207,7 +231,8 @@ async def create_computer(session: AsyncSession, owner: User, club_id: uuid.UUID
 
 
 async def update_computer(session: AsyncSession, owner: User, computer_id: uuid.UUID, payload: ComputerUpdate) -> Computer:
-    computer = await _owned_computer(session, owner, computer_id)
+    computer = await _owned_computer(session, owner, computer_id, lock=True)
+    await _ensure_no_live_booking(session, computer.id)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(computer, key, value)
     await session.commit()
@@ -221,7 +246,10 @@ async def owner_update_computer_status(
     computer = await _owned_computer(session, owner, computer_id, lock=True)
     if payload.status == ComputerStatus.OCCUPIED:
         raise ServiceError("INVALID_COMPUTER_STATUS", "Computer occupancy is derived from its active booking.", 422)
-    await _ensure_no_active_session(session, computer.id)
+    if payload.status in (ComputerStatus.MAINTENANCE, ComputerStatus.DISABLED):
+        await _ensure_no_live_booking(session, computer.id)
+    else:
+        await _ensure_no_active_session(session, computer.id)
     computer.status = payload.status
     await session.commit()
     await session.refresh(computer)
@@ -432,7 +460,10 @@ async def staff_update_computer_status(
         raise ServiceError("COMPUTER_NOT_FOUND", "Computer not found in your assigned clubs.", 404)
     if payload.status == ComputerStatus.OCCUPIED:
         raise ServiceError("INVALID_COMPUTER_STATUS", "Computer occupancy is derived from its active booking.", 422)
-    await _ensure_no_active_session(session, computer.id)
+    if payload.status in (ComputerStatus.MAINTENANCE, ComputerStatus.DISABLED):
+        await _ensure_no_live_booking(session, computer.id)
+    else:
+        await _ensure_no_active_session(session, computer.id)
     computer.status = payload.status
     await session.commit()
     await session.refresh(computer)
@@ -515,7 +546,10 @@ async def admin_update_computer_status(
         raise ServiceError("COMPUTER_NOT_FOUND", "Computer not found.", 404)
     if payload.status == ComputerStatus.OCCUPIED:
         raise ServiceError("INVALID_COMPUTER_STATUS", "Computer occupancy is derived from its active booking.", 422)
-    await _ensure_no_active_session(session, computer.id)
+    if payload.status in (ComputerStatus.MAINTENANCE, ComputerStatus.DISABLED):
+        await _ensure_no_live_booking(session, computer.id)
+    else:
+        await _ensure_no_active_session(session, computer.id)
     computer.status = payload.status
     await session.commit()
     await session.refresh(computer)

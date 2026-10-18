@@ -4,7 +4,7 @@ from datetime import datetime, time, timezone
 from decimal import Decimal
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, ForeignKey, Integer, Numeric, String, Time, Text, UniqueConstraint, func, text
-from sqlalchemy.dialects.postgresql import ExcludeConstraint, UUID
+from sqlalchemy.dialects.postgresql import ExcludeConstraint, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import expression
 from sqlalchemy import func as sql_func
@@ -71,6 +71,8 @@ class Club(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     address: Mapped[str] = mapped_column(String(240))
     city: Mapped[str] = mapped_column(String(100), index=True)
+    timezone: Mapped[str] = mapped_column(String(64), default="Asia/Almaty", server_default="Asia/Almaty")
+    price_menu: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
     latitude: Mapped[float | None]
     longitude: Mapped[float | None]
     phone: Mapped[str] = mapped_column(String(32), default="")

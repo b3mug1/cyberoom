@@ -1,8 +1,10 @@
 import uuid
+from typing import Any
 from datetime import datetime, time
 from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.models import BookingSource, BookingStatus, ComputerStatus, UserRole
 
@@ -80,6 +82,8 @@ class ClubResponse(BaseModel):
     description: str
     address: str
     city: str
+    timezone: str
+    price_menu: dict[str, Any] = Field(default_factory=dict)
     phone: str
     rating: Decimal
     is_active: bool
@@ -160,11 +164,21 @@ class ClubCreate(BaseModel):
     description: str = Field(default="", max_length=5000)
     address: str = Field(min_length=3, max_length=240)
     city: str = Field(min_length=2, max_length=100)
+    timezone: str = Field(default="Asia/Almaty", min_length=1, max_length=64)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     phone: str = Field(default="", max_length=32)
     opening_time: time = time(0)
     closing_time: time = time(23, 59)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError("Use a valid IANA time zone, such as Asia/Almaty") from error
+        return value
 
 
 class ClubUpdate(BaseModel):
@@ -172,12 +186,24 @@ class ClubUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=5000)
     address: str | None = Field(default=None, min_length=3, max_length=240)
     city: str | None = Field(default=None, min_length=2, max_length=100)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     phone: str | None = Field(default=None, max_length=32)
     opening_time: time | None = None
     closing_time: time | None = None
     is_active: bool | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            raise ValueError("Time zone cannot be null")
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError("Use a valid IANA time zone, such as Asia/Almaty") from error
+        return value
 
 
 class ComputerCreate(BaseModel):

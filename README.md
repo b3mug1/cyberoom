@@ -9,6 +9,7 @@ Implemented in this phase:
 - FastAPI with async SQLAlchemy 2, Pydantic v2, and a versioned `/api/v1` API.
 - Argon2 password hashes, short-lived JWT access tokens, rotated refresh tokens in scoped HttpOnly cookies, and user reload from the database for protected requests.
 - Club search with server-side pagination, city/name/hardware filters, club detail data, and sample club listings.
+- Structured club price menus displayed alongside bookable hourly tariffs; demo BRO menu includes Standard and Bootcamp weekday/weekend prices.
 - Backend tariff pricing, booking validation, ownership-checked booking reads/cancellation, and valid booking status transitions.
 - Unified online and staff-created walk-in reservations, actual session start/end records, conflict-checked extensions, and a club availability API.
 - PostgreSQL GiST exclusion constraint plus row locking for overlapping-booking protection.
@@ -84,7 +85,7 @@ Set-Location backend
 alembic upgrade head
 ```
 
-Seed five fictional clubs and 50 computers with test roles and time-based tariffs:
+Seed five fictional clubs, the BRO sample club and demo pricing menu, plus 50 computers with test roles and time-based tariffs:
 
 ```powershell
 python -m app.seed
@@ -100,6 +101,8 @@ The seed command is idempotent for a non-empty clubs table. Seed accounts use th
 | ADMIN | `admin@example.com` | `platformadmin` |
 
 The password for these local demo accounts is `CyberBook!2026`. OWNER can assign STAFF accounts to clubs from `/dashboard`; STAFF only sees assigned clubs. Sign in as OWNER, STAFF, or ADMIN to open the matching role dashboard.
+
+BRO is seeded in Astana with its price menu from the supplied reference. Its address and computer lineup are placeholders, and menu prices are informational; online booking quotes continue to use the club's hourly tariffs.
 
 ## API Overview
 
@@ -130,6 +133,8 @@ Interactive API documentation is served by FastAPI at `/docs`.
 ## Booking Rules
 
 The server ignores client prices and calculates cost from active club tariffs by the minute. Bookings require timezone-aware whole-minute timestamps and must be between 15 minutes and 8 hours. A booking cannot start in the past, and maintenance/disabled computers cannot be booked. Users can only view and cancel their own bookings; cancellation is limited to pending or confirmed bookings.
+
+Tariffs use the club's IANA time zone, regardless of the offset in the client's request. Existing clubs receive `Asia/Almaty` when migration `0004` runs; owners should check each club's time zone in the dashboard and correct it before accepting new reservations. Changing the time zone is blocked while the club has active or upcoming bookings. New bookings keep the 15-minute minimum; an active session may be extended by a shorter whole-minute interval if its total duration remains within eight hours.
 
 The service checks for overlap to return a useful conflict error. PostgreSQL is the final concurrency guard: a GiST exclusion constraint rejects intersecting `[start, end)` ranges for the same computer while a row lock serializes competing requests.
 
@@ -167,4 +172,4 @@ npm run build
 
 Passwords are Argon2-hashed. Access tokens are short-lived. Refresh tokens are random, stored server-side only as SHA-256 hashes, rotated on refresh, and sent to the browser in a path-scoped HttpOnly cookie. The frontend stores only the access token in session storage. Configure a strong `JWT_SECRET`, HTTPS, production CORS origins, and secure database credentials before deployment.
 
-This is an early project phase, not a complete production service. Staff/owner/admin authorization, CSRF defenses for cookie-backed operations, rate limiting, audit logging, monitoring, and the unimplemented features listed above are required before public deployment.
+Refresh and logout requests carrying a refresh cookie require a trusted `Origin` matching the configured `CORS_ORIGINS` or the API's own origin. This is an early project phase, not a complete production service. Rate limiting, audit logging, monitoring, and the unimplemented features listed above are required before public deployment.

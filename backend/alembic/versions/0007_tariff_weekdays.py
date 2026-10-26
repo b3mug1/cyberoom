@@ -5,7 +5,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0007_tariff_weekdays"
-down_revision = "0006_booking_rescheduling_reviews"
+down_revision = "0006_booking_reviews"
 branch_labels = None
 depends_on = None
 

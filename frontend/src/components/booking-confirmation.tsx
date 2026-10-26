@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, CalendarDays, Check, CircleHelp, Clock3, Gamepad
 import { QRCodeSVG } from "qrcode.react";
 import { useSyncExternalStore } from "react";
 import { getBooking, requestJson } from "@/lib/api";
+import { Brand } from "@/components/brand";
 
 function subscribe(callback: () => void) {
   window.addEventListener("storage", callback);
@@ -13,7 +14,7 @@ function subscribe(callback: () => void) {
 }
 
 function getAccessToken() {
-  return window.sessionStorage.getItem("cyberbook.access") ?? "";
+  return window.sessionStorage.getItem("cyberoom.access") ?? "";
 }
 
 function bookingDate(value: string) {
@@ -38,7 +39,7 @@ export function BookingConfirmation({ bookingId }: { bookingId: string }) {
   if (query.isError || !booking) return <main className="booking-not-found"><CircleHelp size={22} /><h1>Booking unavailable.</h1><p>{query.error?.message}</p><Link href="/bookings">Your bookings <ArrowRight size={15} /></Link></main>;
 
   const cancellable = booking.status === "PENDING" || booking.status === "CONFIRMED";
-  return <main className="confirmation-page"><header className="detail-top"><Link className="brand" href="/"><span className="brand-mark"><Gamepad2 size={17} /></span><span>cyber<span>book</span></span></Link><Link className="back-link" href="/bookings"><ArrowLeft size={15} /> All bookings</Link></header>
+  return <main className="confirmation-page"><header className="detail-top"><Brand size="md" /><Link className="back-link" href="/bookings"><ArrowLeft size={15} /> All bookings</Link></header>
     <section className="confirmation-wrap"><div className="confirmation-overline"><span className="confirmation-check"><Check size={18} /></span><div><div className="eyebrow">BOOKING CONFIRMED</div><p>Your session is on the calendar.</p></div></div>
       <div className="confirmation-grid"><article className="confirmation-details"><div className="eyebrow">BOOKING / {booking.id.slice(0, 8).toUpperCase()}</div><h1>Ready when<br /><em>you are.</em></h1><div className="confirmation-fact"><CalendarDays size={16} /><span><small>STARTS</small>{bookingDate(booking.start_time)}</span></div><div className="confirmation-fact"><Clock3 size={16} /><span><small>ENDS</small>{bookingDate(booking.end_time)}</span></div><div className="confirmation-summary"><span>Computer ID</span><strong>{booking.computer_id.slice(0, 8)}</strong><span>Status</span><strong>{booking.status}</strong><span>Total</span><strong>{Number(booking.total_price).toLocaleString("en-US")} KZT</strong></div>
         {cancelMutation.isError && <p className="form-error" role="alert">{cancelMutation.error.message}</p>}{cancelMutation.isSuccess && <p className="form-error">Booking cancelled.</p>}

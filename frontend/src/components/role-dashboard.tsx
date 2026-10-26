@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight, Building2, Cpu, Gauge, ShieldCheck, Users } from
 
 import { authenticatedRequest, getProfile } from "@/lib/api";
 import { getAccessToken, hasAccessToken, subscribeToAuth } from "@/lib/auth-session";
+import { Brand } from "@/components/brand";
 import type { Booking, Club, Computer } from "@/types/api";
 
 type Profile = Awaited<ReturnType<typeof getProfile>>;
@@ -54,7 +55,7 @@ async function loadRoleData<T>(token: string, role: Profile["role"]): Promise<T>
 }
 
 function DashboardFrame({ profile, children }: { profile: Profile; children: React.ReactNode }) {
-  return <main className="role-dashboard"><header className="detail-top"><Link className="brand" href="/"><span className="brand-mark">CB</span><span>cyber<span>book</span></span></Link><Link className="back-link" href="/profile"><ArrowLeft size={15} /> Profile</Link></header><section className="role-content"><div className="role-heading"><div><div className="eyebrow">CONTROL ROOM / {profile.role}</div><h1>{profile.role === "OWNER" ? "Your venues." : profile.role === "STAFF" ? "Today’s floor." : "Platform overview."}</h1><p>{profile.full_name} <span>·</span> {profile.role.toLowerCase()}</p></div><span className="role-mark">{profile.role}</span></div>{children}</section></main>;
+  return <main className="role-dashboard"><header className="detail-top"><Brand size="md" /><Link className="back-link" href="/profile"><ArrowLeft size={15} /> Profile</Link></header><section className="role-content"><div className="role-heading"><div><div className="eyebrow">CONTROL ROOM / {profile.role}</div><h1>{profile.role === "OWNER" ? "Your venues." : profile.role === "STAFF" ? "Today’s floor." : "Platform overview."}</h1><p>{profile.full_name} <span>·</span> {profile.role.toLowerCase()}</p></div><span className="role-mark">{profile.role}</span></div>{children}</section></main>;
 }
 
 function StatStrip({ values }: { values: Array<{ label: string; value: string | number }> }) {

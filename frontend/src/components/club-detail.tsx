@@ -9,6 +9,7 @@ import { useState, useSyncExternalStore } from "react";
 
 import { apiBase, getClub, requestJson } from "@/lib/api";
 import { clubDate, clubLocalToIso, nextClubDate } from "@/lib/club-time";
+import { Brand } from "@/components/brand";
 import type { ClubPriceMenu, Computer } from "@/types/api";
 
 type Quote = { total_price: string; currency: string };
@@ -21,7 +22,7 @@ function subscribeToSession(callback: () => void) {
 }
 
 function hasActiveSession() {
-  return Boolean(window.sessionStorage.getItem("cyberbook.access"));
+  return Boolean(window.sessionStorage.getItem("cyberoom.access"));
 }
 
 function ComputerRow({ computer, selected, onSelect }: { computer: Computer; selected: boolean; onSelect: () => void }) {
@@ -122,7 +123,7 @@ export function ClubDetail({ clubId }: { clubId: string }) {
 
   const bookingMutation = useMutation({
     mutationFn: async () => {
-      const accessToken = sessionStorage.getItem("cyberbook.access");
+      const accessToken = sessionStorage.getItem("cyberoom.access");
       if (!accessToken) throw new Error("Sign in to confirm your booking.");
       return requestJson<Booking>("/bookings", { computer_id: computerId, ...interval }, accessToken);
     },
@@ -136,9 +137,9 @@ export function ClubDetail({ clubId }: { clubId: string }) {
   const availableComputers = club.computers.filter((computer) => computer.is_active && computer.status === "AVAILABLE");
 
   return <main className="detail-page">
-    <header className="detail-top"><Link className="brand" href="/"><span className="brand-mark">CB</span><span>cyber<span>book</span></span></Link><Link className="back-link" href="/"><ArrowLeft size={15} /> All clubs</Link><Link className="detail-account" href={signedIn ? "/bookings" : "/login"}>{signedIn ? "My bookings" : "Sign in"}</Link></header>
+    <header className="detail-top"><Brand size="md" /><Link className="back-link" href="/"><ArrowLeft size={15} /> All clubs</Link><Link className="detail-account" href={signedIn ? "/bookings" : "/login"}>{signedIn ? "My bookings" : "Sign in"}</Link></header>
     <section className="club-detail-hero">
-      <div className="club-detail-photo"><Image fill priority sizes="100vw" src="https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1800&q=90" alt={`${club.name} gaming floor`} /><span className="photo-caption"><span className="live-dot" /> CLUB / {club.city.toUpperCase()}</span><span className="photo-index">CB—{club.id.slice(0, 4).toUpperCase()}</span></div>
+      <div className="club-detail-photo"><Image fill priority sizes="100vw" src="https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1800&q=90" alt={`${club.name} gaming floor`} /><span className="photo-caption"><span className="live-dot" /> CLUB / {club.city.toUpperCase()}</span><span className="photo-index">CR—{club.id.slice(0, 4).toUpperCase()}</span></div>
       <div className="club-detail-title"><div><div className="eyebrow"><MapPin size={13} /> {club.address} · {club.city}</div><h1>{club.name}</h1><p>{club.description}</p></div><div className="club-rating"><span>★</span>{Number(club.rating).toFixed(1)}<small>Club rating</small></div></div>
       <div className="club-facts"><span><ShieldCheck size={15} /> {availableComputers.length} PCs listed available</span><span><MonitorCog size={15} /> {club.computers.length} gaming stations</span><span><Clock3 size={15} /> Open daily</span><span>{club.phone}</span></div>
     </section>

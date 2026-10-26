@@ -8,6 +8,7 @@ import { useSyncExternalStore } from "react";
 
 import { getProfile, requestJson } from "@/lib/api";
 import { clearAccessToken, getAccessToken, hasAccessToken, subscribeToAuth } from "@/lib/auth-session";
+import { Brand } from "@/components/brand";
 
 export function ProfilePage() {
   const router = useRouter();
@@ -23,7 +24,7 @@ export function ProfilePage() {
   });
 
   return <main className="profile-page">
-    <header className="detail-top"><Link className="brand" href="/"><span className="brand-mark">CB</span><span>cyber<span>book</span></span></Link><Link className="back-link" href="/"><ArrowLeft size={15} /> Explore clubs</Link></header>
+    <header className="detail-top"><Brand size="md" /><Link className="back-link" href="/"><ArrowLeft size={15} /> Explore clubs</Link></header>
     <section className="profile-content"><div className="eyebrow">PLAYER SPACE / ACCOUNT</div><h1>Your profile.</h1>
       {!authenticated && <div className="profile-message"><CircleUserRound size={22} /><div><strong>You’re signed out.</strong><span>Sign in to see your account details.</span></div><Link href="/login">Sign in <ArrowRight size={15} /></Link></div>}
       {profileQuery.isPending && authenticated && <div className="result-state"><div className="loading-line" /><span>Loading your profile...</span></div>}

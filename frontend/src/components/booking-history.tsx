@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, CalendarDays, CircleHelp } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { getBookings } from "@/lib/api";
+import { Brand } from "@/components/brand";
 import type { Booking } from "@/types/api";
 
 function subscribe(callback: () => void) {
@@ -13,7 +14,7 @@ function subscribe(callback: () => void) {
 }
 
 function getAccessToken() {
-  return window.sessionStorage.getItem("cyberbook.access") ?? "";
+  return window.sessionStorage.getItem("cyberoom.access") ?? "";
 }
 
 function bookingDate(value: string) {
@@ -29,7 +30,7 @@ export function BookingHistory() {
   const query = useQuery({ queryKey: ["bookings", token], queryFn: () => getBookings(token), enabled: Boolean(token) });
   const bookings = query.data ?? [];
 
-  return <main className="history-page"><header className="detail-top"><Link className="brand" href="/"><span className="brand-mark">CB</span><span>cyber<span>book</span></span></Link><Link className="back-link" href="/"><ArrowLeft size={15} /> Explore clubs</Link></header>
+  return <main className="history-page"><header className="detail-top"><Brand size="md" /><Link className="back-link" href="/"><ArrowLeft size={15} /> Explore clubs</Link></header>
     <section className="history-content"><div className="eyebrow">PLAYER SPACE / BOOKINGS</div><h1>Your sessions.</h1><p className="history-lede">Every booking in one place, from confirmed sessions to past runs.</p>
       {!token && <div className="history-empty"><CircleHelp size={22} /><div><strong>Sign in to view your bookings.</strong><span>Your confirmed sessions will appear here.</span></div><Link href="/login">Sign in <ArrowRight size={15} /></Link></div>}
       {query.isPending && token && <div className="result-state"><div className="loading-line" /><span>Loading your sessions...</span></div>}

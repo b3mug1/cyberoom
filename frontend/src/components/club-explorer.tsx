@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowDownRight, ArrowRight, ChevronDown, CircleHelp, Cpu, Gamepad2, MapPin, Search, ShieldCheck, Sparkles, Wifi, CircleUserRound } from "lucide-react";
 import { getClubs } from "@/lib/api";
 import { hasAccessToken, subscribeToAuth } from "@/lib/auth-session";
+import { Brand } from "@/components/brand";
 
 const cityOptions = ["All cities", "Almaty", "Astana", "Karaganda", "Pavlodar", "Shymkent"];
 const images = [
@@ -28,7 +29,7 @@ export function ClubExplorer() {
   return (
     <main className="site-shell">
       <header className="topbar">
-        <Link className="brand" href="/" aria-label="CyberBook home"><span className="brand-mark"><Gamepad2 size={19} /></span><span>cyber<span>book</span></span></Link>
+        <Brand size="md" />
         <nav className="main-nav" aria-label="Main navigation"><a className="nav-active" href="#clubs">Explore clubs</a><a href="#how-it-works">How it works</a></nav>
         <div className="account-nav">{authenticated ? <Link href="/profile" className="profile-link" aria-label="Profile" title="Profile"><CircleUserRound size={22} /></Link> : <><Link href="/login" className="sign-in">Sign in</Link><Link href="/register" className="join-button">Create account <ArrowRight size={15} /></Link></>}</div>
       </header>
@@ -48,7 +49,7 @@ export function ClubExplorer() {
           <div className="visual-stamp"><Sparkles size={15} /><span>PLAY<br />YOUR<br />WAY</span></div>
           <div className="visual-caption"><Wifi size={14} /> AVAILABLE SESSIONS UPDATED LIVE</div>
         </div>
-        <div className="hero-side-note">CYBERBOOK / 01 — DISCOVER</div>
+        <div className="hero-side-note">CYBEROOM / 01 — DISCOVER</div>
       </section>
 
       <section className="discovery" id="clubs" aria-labelledby="clubs-title">
@@ -84,7 +85,7 @@ export function ClubExplorer() {
       </section>
 
       <section className="how-strip" id="how-it-works"><div className="how-number">01 / 03</div><div><div className="eyebrow">NO GUESSWORK</div><h2>Good sessions<br />start with a plan.</h2></div><div className="how-step"><span>01</span><strong>Pick your club</strong><p>Compare locations and real PC setups.</p></div><div className="how-step"><span>02</span><strong>Choose a time</strong><p>See your price before you confirm.</p></div><div className="how-step"><span>03</span><strong>Show up and play</strong><p>Your booking details stay in one place.</p></div></section>
-      <footer className="footer"><Link className="brand" href="/"><span className="brand-mark"><Gamepad2 size={17} /></span><span>cyber<span>book</span></span></Link><span>MAKE TIME FOR ONE MORE.</span><span>© 2026 CYBERBOOK</span></footer>
+      <footer className="footer"><Brand size="sm" /><span>MAKE TIME FOR ONE MORE.</span><span>© 2026 CYBEROOM</span></footer>
     </main>
   );
 }

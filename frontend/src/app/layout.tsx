@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CyberBook | Find your next session",
+  title: "Cyberoom | Find your next session",
   description: "Discover gaming clubs, compare PC setups, and book your next session.",
 };
 

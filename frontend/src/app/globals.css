@@ -19,9 +19,14 @@ button, input, select { font: inherit; }
 ::selection { color: var(--ink); background: var(--lime); }
 .site-shell { overflow: hidden; background: var(--ink); }
 .topbar { height: 78px; padding: 0 clamp(22px, 6.2vw, 100px); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
-.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--white); font-size: 17px; font-weight: 700; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--white); font-size: 17px; font-weight: 700; text-decoration: none; }
 .brand > span:last-child > span { color: var(--lime); }
 .brand-mark { width: 31px; height: 31px; background: var(--lime); color: var(--ink); display: grid; place-items: center; }
+.brand-logo { height: 38px; width: auto; object-fit: contain; display: block; transition: transform 180ms ease, filter 180ms ease; filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.25)); }
+.brand:hover .brand-logo { transform: scale(1.02); filter: drop-shadow(0 0 12px rgba(0, 229, 255, 0.55)); }
+.brand-sm .brand-logo, .footer .brand-logo { height: 26px; }
+.brand-lg .brand-logo, .auth-visual .brand-logo { height: 46px; }
+.detail-top .brand-logo { height: 36px; }
 .main-nav, .account-nav { display: flex; align-items: center; gap: 32px; }
 .main-nav a, .sign-in { color: #b1b8af; font-size: 12px; font-weight: 520; transition: color 160ms ease; }
 .main-nav a:hover, .sign-in:hover, .main-nav .nav-active { color: var(--white); }

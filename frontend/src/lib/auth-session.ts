@@ -1,4 +1,4 @@
-const authChangedEvent = "cyberbook:auth-changed";
+const authChangedEvent = "cyberoom:auth-changed";
 
 export function subscribeToAuth(callback: () => void) {
   window.addEventListener("storage", callback);
@@ -10,19 +10,19 @@ export function subscribeToAuth(callback: () => void) {
 }
 
 export function hasAccessToken() {
-  return Boolean(window.sessionStorage.getItem("cyberbook.access"));
+  return Boolean(window.sessionStorage.getItem("cyberoom.access"));
 }
 
 export function getAccessToken() {
-  return window.sessionStorage.getItem("cyberbook.access") ?? "";
+  return window.sessionStorage.getItem("cyberoom.access") ?? "";
 }
 
 export function saveAccessToken(token: string) {
-  window.sessionStorage.setItem("cyberbook.access", token);
+  window.sessionStorage.setItem("cyberoom.access", token);
   window.dispatchEvent(new Event(authChangedEvent));
 }
 
 export function clearAccessToken() {
-  window.sessionStorage.removeItem("cyberbook.access");
+  window.sessionStorage.removeItem("cyberoom.access");
   window.dispatchEvent(new Event(authChangedEvent));
 }

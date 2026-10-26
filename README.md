@@ -1,6 +1,6 @@
-# CyberBook
+# Cyberoom
 
-CyberBook is a booking platform foundation for discovering fictional computer clubs, comparing gaming PCs, and reserving a time slot. The repository contains a Python API and a TypeScript Next.js application, with PostgreSQL-backed booking conflict protection.
+Cyberoom is a booking platform foundation for discovering fictional computer clubs, comparing gaming PCs, and reserving a time slot. The repository contains a Python API and a TypeScript Next.js application, with PostgreSQL-backed booking conflict protection.
 
 ## Current Scope
 
@@ -58,7 +58,7 @@ python -m pip install -r backend\requirements.txt
 Set the database URL for the local processes, then run the API from `backend`:
 
 ```powershell
-$env:DATABASE_URL = "postgresql+asyncpg://cyberbook:cyberbook-dev-only@localhost:5432/cyberbook"
+$env:DATABASE_URL = "postgresql+asyncpg://cyberoom:cyberoom-dev-only@localhost:5432/cyberoom"
 $env:JWT_SECRET = "local-development-secret-change-this-value"
 Set-Location backend
 alembic upgrade head
@@ -91,7 +91,7 @@ Seed five fictional clubs, the BRO sample club and demo pricing menu, plus 50 co
 python -m app.seed
 ```
 
-The seed command is idempotent for a non-empty clubs table. Seed accounts use the reserved `example.com` domain and the development-only password `CyberBook!2026`; change or remove these accounts outside local development.
+The seed command is idempotent for a non-empty clubs table. Seed accounts use the reserved `example.com` domain and the development-only password `Cyberoom!2026`; change or remove these accounts outside local development.
 
 | Role | Email | Username |
 | --- | --- | --- |
@@ -100,7 +100,7 @@ The seed command is idempotent for a non-empty clubs table. Seed accounts use th
 | OWNER | `owner@example.com` | `clubowner` |
 | ADMIN | `admin@example.com` | `platformadmin` |
 
-The password for these local demo accounts is `CyberBook!2026`. OWNER can assign STAFF accounts to clubs from `/dashboard`; STAFF only sees assigned clubs. Sign in as OWNER, STAFF, or ADMIN to open the matching role dashboard.
+The password for these local demo accounts is `Cyberoom!2026`. OWNER can assign STAFF accounts to clubs from `/dashboard`; STAFF only sees assigned clubs. Sign in as OWNER, STAFF, or ADMIN to open the matching role dashboard.
 
 BRO is seeded in Astana with its price menu from the supplied reference. Its address and computer lineup are placeholders, and menu prices are informational; online booking quotes continue to use the club's hourly tariffs.
 
@@ -152,7 +152,7 @@ pytest -q
 The PostgreSQL concurrency test is skipped unless `TEST_DATABASE_URL` points to a dedicated disposable test database. It creates its required tables and `btree_gist` extension, sends two overlapping booking operations concurrently, and asserts exactly one succeeds. For example:
 
 ```powershell
-$env:TEST_DATABASE_URL = "postgresql+asyncpg://cyberbook:cyberbook-dev-only@localhost:5432/cyberbook_test"
+$env:TEST_DATABASE_URL = "postgresql+asyncpg://cyberoom:cyberoom-dev-only@localhost:5432/cyberoom_test"
 pytest tests\test_booking_concurrency.py -q
 ```
 

@@ -1,18 +1,24 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.models import (
+    AuditLog,
     Booking,
     BookingStatus,
     Club,
     Computer,
     ComputerStatus,
+    MembershipPlan,
+    PromoCode,
     StaffAssignment,
+    StaffShift,
     Tariff,
     User,
     UserRole,
@@ -27,13 +33,23 @@ from app.schemas import (
     ComputerUpdate,
     ComputerStatusUpdate,
     ManagedClubResponse,
+    MembershipPlanCreate,
+    MembershipPlanStatusUpdate,
     OwnerClubMetric,
     OwnerDashboard,
+    OwnerReport,
+    OwnerReportComputer,
+    OwnerReportDay,
+    OwnerReportHour,
+    PromoCodeCreate,
+    PromoCodeStatusUpdate,
     StaffBookingResponse,
     StaffDashboard,
     StaffComputerResponse,
     StaffAssignmentCreate,
     StaffMemberResponse,
+    StaffShiftCreate,
+    StaffShiftResponse,
     SessionExtend,
     TariffCreate,
     TariffUpdate,
@@ -41,7 +57,9 @@ from app.schemas import (
     UserAdminResponse,
 )
 from app.services.errors import ServiceError
+from app.services.audit import record_audit
 from app.services import bookings
+from app.services import payments
 from app.services.transitions import transition_booking
 
 ACTIVE_BOOKING_STATUSES = (BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ACTIVE)
@@ -185,6 +203,174 @@ async def owner_dashboard(session: AsyncSession, owner: User) -> OwnerDashboard:
     )
 
 
+async def owner_report(session: AsyncSession, owner: User, start_date: date, end_date: date) -> OwnerReport:
+    span = (end_date - start_date).days
+    if span < 0 or span > 90:
+        raise ServiceError("INVALID_REPORT_RANGE", "Choose a date range of up to 90 days.", 422)
+
+    clubs = list(await session.scalars(select(Club).where(Club.owner_id == owner.id)))
+    daily_values: dict[date, list[Decimal | int]] = {}
+    current_day = start_date
+    while current_day <= end_date:
+        daily_values[current_day] = [0, Decimal("0")]
+        current_day += timedelta(days=1)
+    hourly_values = [0] * 24
+    computer_values: dict[uuid.UUID, list[Decimal | int | str]] = {}
+    total_bookings = 0
+    total_value = Decimal("0")
+
+    for club in clubs:
+        zone = ZoneInfo(club.timezone)
+        interval_start = datetime.combine(start_date, time.min, tzinfo=zone).astimezone(timezone.utc)
+        interval_end = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=zone).astimezone(timezone.utc)
+        local_start = func.timezone(club.timezone, Booking.start_time)
+        where = (
+            Computer.club_id == club.id,
+            Booking.start_time >= interval_start,
+            Booking.start_time < interval_end,
+        )
+        value_expression = func.coalesce(
+            func.sum(case((Booking.status.in_(REVENUE_BOOKING_STATUSES), Booking.total_price), else_=Decimal("0"))),
+            Decimal("0"),
+        )
+
+        daily_rows = await session.execute(
+            select(func.date(local_start), func.count(Booking.id), value_expression)
+            .select_from(Booking).join(Computer, Booking.computer_id == Computer.id).where(*where).group_by(func.date(local_start))
+        )
+        for bucket_date, count, value in daily_rows:
+            metrics = daily_values[bucket_date]
+            metrics[0] += count
+            metrics[1] += value
+            total_bookings += count
+            total_value += value
+
+        hourly_rows = await session.execute(
+            select(func.extract("hour", local_start), func.count(Booking.id))
+            .select_from(Booking).join(Computer, Booking.computer_id == Computer.id).where(*where).group_by(func.extract("hour", local_start))
+        )
+        for hour, count in hourly_rows:
+            hourly_values[int(hour)] += count
+
+        computer_rows = await session.execute(
+            select(Computer.id, Computer.name, func.count(Booking.id), value_expression)
+            .select_from(Booking).join(Computer, Booking.computer_id == Computer.id).where(*where)
+            .group_by(Computer.id, Computer.name).order_by(Computer.name)
+        )
+        for computer_id, computer_name, count, value in computer_rows:
+            metrics = computer_values.setdefault(computer_id, [computer_name, 0, Decimal("0")])
+            metrics[1] += count
+            metrics[2] += value
+
+    return OwnerReport(
+        start_date=start_date,
+        end_date=end_date,
+        bookings=total_bookings,
+        booking_value=total_value,
+        daily=[OwnerReportDay(date=day, bookings=int(values[0]), booking_value=values[1]) for day, values in daily_values.items()],
+        hourly=[OwnerReportHour(hour=hour, bookings=count) for hour, count in enumerate(hourly_values)],
+        computers=[
+            OwnerReportComputer(computer_id=computer_id, computer_name=str(values[0]), bookings=int(values[1]), booking_value=values[2])
+            for computer_id, values in computer_values.items()
+        ],
+    )
+
+
+async def owner_audit(session: AsyncSession, owner: User, limit: int) -> list[AuditLog]:
+    club_ids = select(Club.id).where(Club.owner_id == owner.id)
+    return list(await session.scalars(
+        select(AuditLog).where(AuditLog.club_id.in_(club_ids)).order_by(AuditLog.created_at.desc()).limit(limit)
+    ))
+
+
+async def owner_promo_codes(session: AsyncSession, owner: User) -> list[PromoCode]:
+    club_ids = select(Club.id).where(Club.owner_id == owner.id)
+    return list(await session.scalars(
+        select(PromoCode).where(PromoCode.club_id.in_(club_ids)).order_by(PromoCode.created_at.desc()).limit(200)
+    ))
+
+
+async def create_promo_code(session: AsyncSession, owner: User, club_id: uuid.UUID, payload: PromoCodeCreate) -> PromoCode:
+    club = await _owned_club(session, owner, club_id, lock=True)
+    promo = PromoCode(club_id=club.id, **payload.model_dump())
+    session.add(promo)
+    try:
+        await session.flush()
+        record_audit(
+            session, actor_id=owner.id, action="promo_code.created", entity_type="promo_code", entity_id=promo.id,
+            club_id=club.id, details={"code": promo.code, "discount_type": promo.discount_type},
+        )
+        await session.commit()
+    except IntegrityError as error:
+        await session.rollback()
+        raise ServiceError("PROMO_CODE_EXISTS", "A promo code with this name already exists for this club.", 409) from error
+    await session.refresh(promo)
+    return promo
+
+
+async def set_promo_code_status(
+    session: AsyncSession, owner: User, promo_id: uuid.UUID, payload: PromoCodeStatusUpdate,
+) -> PromoCode:
+    promo = await session.scalar(
+        select(PromoCode).join(Club).where(PromoCode.id == promo_id, Club.owner_id == owner.id).with_for_update(of=PromoCode)
+    )
+    if promo is None:
+        raise ServiceError("PROMO_CODE_NOT_FOUND", "Promo code not found in your clubs.", 404)
+    promo.is_active = payload.is_active
+    record_audit(
+        session, actor_id=owner.id, action="promo_code.status_changed", entity_type="promo_code", entity_id=promo.id,
+        club_id=promo.club_id, details={"is_active": promo.is_active},
+    )
+    await session.commit()
+    await session.refresh(promo)
+    return promo
+
+
+async def owner_membership_plans(session: AsyncSession, owner: User) -> list[MembershipPlan]:
+    club_ids = select(Club.id).where(Club.owner_id == owner.id)
+    return list(await session.scalars(
+        select(MembershipPlan).where(MembershipPlan.club_id.in_(club_ids)).order_by(MembershipPlan.created_at.desc()).limit(200)
+    ))
+
+
+async def create_membership_plan(
+    session: AsyncSession, owner: User, club_id: uuid.UUID, payload: MembershipPlanCreate,
+) -> MembershipPlan:
+    club = await _owned_club(session, owner, club_id, lock=True)
+    plan = MembershipPlan(club_id=club.id, **payload.model_dump())
+    session.add(plan)
+    await session.flush()
+    record_audit(
+        session, actor_id=owner.id, action="membership_plan.created", entity_type="membership_plan", entity_id=plan.id,
+        club_id=club.id, details={"hours": plan.hours, "price": str(plan.price)},
+    )
+    await session.commit()
+    await session.refresh(plan)
+    return plan
+
+
+async def set_membership_plan_status(
+    session: AsyncSession, owner: User, plan_id: uuid.UUID, payload: MembershipPlanStatusUpdate,
+) -> MembershipPlan:
+    plan = await session.scalar(
+        select(MembershipPlan).join(Club).where(MembershipPlan.id == plan_id, Club.owner_id == owner.id).with_for_update(of=MembershipPlan)
+    )
+    if plan is None:
+        raise ServiceError("MEMBERSHIP_PLAN_NOT_FOUND", "Membership plan not found in your clubs.", 404)
+    plan.is_active = payload.is_active
+    record_audit(
+        session, actor_id=owner.id, action="membership_plan.status_changed", entity_type="membership_plan", entity_id=plan.id,
+        club_id=plan.club_id, details={"is_active": plan.is_active},
+    )
+    await session.commit()
+    await session.refresh(plan)
+    return plan
+
+
+async def admin_audit(session: AsyncSession, limit: int) -> list[AuditLog]:
+    return list(await session.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)))
+
+
 async def owner_clubs(session: AsyncSession, owner: User) -> list[Club]:
     return list(
         await session.scalars(
@@ -196,6 +382,8 @@ async def owner_clubs(session: AsyncSession, owner: User) -> list[Club]:
 async def create_club(session: AsyncSession, owner: User, payload: ClubCreate) -> Club:
     club = Club(owner_id=owner.id, **payload.model_dump())
     session.add(club)
+    await session.flush()
+    record_audit(session, actor_id=owner.id, action="club.created", entity_type="club", entity_id=club.id, club_id=club.id)
     await session.commit()
     await session.refresh(club)
     return club
@@ -216,6 +404,9 @@ async def update_club(session: AsyncSession, owner: User, club_id: uuid.UUID, pa
             raise ServiceError("CLUB_HAS_BOOKINGS", "Resolve active and upcoming bookings before changing the club time zone.", 409)
     for key, value in changes.items():
         setattr(club, key, value)
+    if changes:
+        record_audit(session, actor_id=owner.id, action="club.updated", entity_type="club", entity_id=club.id, club_id=club.id,
+                     details={"fields": sorted(changes)})
     await session.commit()
     await session.refresh(club)
     return club
@@ -225,6 +416,8 @@ async def create_computer(session: AsyncSession, owner: User, club_id: uuid.UUID
     await _owned_club(session, owner, club_id)
     computer = Computer(club_id=club_id, **payload.model_dump())
     session.add(computer)
+    await session.flush()
+    record_audit(session, actor_id=owner.id, action="computer.created", entity_type="computer", entity_id=computer.id, club_id=club_id)
     await session.commit()
     await session.refresh(computer)
     return computer
@@ -233,8 +426,12 @@ async def create_computer(session: AsyncSession, owner: User, club_id: uuid.UUID
 async def update_computer(session: AsyncSession, owner: User, computer_id: uuid.UUID, payload: ComputerUpdate) -> Computer:
     computer = await _owned_computer(session, owner, computer_id, lock=True)
     await _ensure_no_live_booking(session, computer.id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    for key, value in changes.items():
         setattr(computer, key, value)
+    if changes:
+        record_audit(session, actor_id=owner.id, action="computer.updated", entity_type="computer", entity_id=computer.id,
+                     club_id=computer.club_id, details={"fields": sorted(changes)})
     await session.commit()
     await session.refresh(computer)
     return computer
@@ -250,7 +447,10 @@ async def owner_update_computer_status(
         await _ensure_no_live_booking(session, computer.id)
     else:
         await _ensure_no_active_session(session, computer.id)
+    previous_status = computer.status
     computer.status = payload.status
+    record_audit(session, actor_id=owner.id, action="computer.status_changed", entity_type="computer", entity_id=computer.id,
+                 club_id=computer.club_id, details={"from": previous_status.value, "to": payload.status.value})
     await session.commit()
     await session.refresh(computer)
     return computer
@@ -260,6 +460,8 @@ async def create_tariff(session: AsyncSession, owner: User, club_id: uuid.UUID, 
     await _owned_club(session, owner, club_id)
     tariff = Tariff(club_id=club_id, **payload.model_dump())
     session.add(tariff)
+    await session.flush()
+    record_audit(session, actor_id=owner.id, action="tariff.created", entity_type="tariff", entity_id=tariff.id, club_id=club_id)
     await session.commit()
     await session.refresh(tariff)
     return tariff
@@ -267,8 +469,12 @@ async def create_tariff(session: AsyncSession, owner: User, club_id: uuid.UUID, 
 
 async def update_tariff(session: AsyncSession, owner: User, tariff_id: uuid.UUID, payload: TariffUpdate) -> Tariff:
     tariff = await _owned_tariff(session, owner, tariff_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    for key, value in changes.items():
         setattr(tariff, key, value)
+    if changes:
+        record_audit(session, actor_id=owner.id, action="tariff.updated", entity_type="tariff", entity_id=tariff.id,
+                     club_id=tariff.club_id, details={"fields": sorted(changes)})
     await session.commit()
     await session.refresh(tariff)
     return tariff
@@ -287,6 +493,9 @@ async def assign_staff(session: AsyncSession, owner: User, club_id: uuid.UUID, p
     staff.role = UserRole.STAFF
     assignment = StaffAssignment(staff_user_id=staff.id, club_id=club_id, assigned_by_user_id=owner.id)
     session.add(assignment)
+    await session.flush()
+    record_audit(session, actor_id=owner.id, action="staff.assigned", entity_type="staff_assignment", entity_id=assignment.id,
+                 club_id=club_id, details={"staff_user_id": str(staff.id)})
     await session.commit()
     await session.refresh(assignment)
     return assignment
@@ -299,6 +508,8 @@ async def remove_staff(session: AsyncSession, owner: User, club_id: uuid.UUID, s
     )
     if assignment is None:
         raise ServiceError("STAFF_ASSIGNMENT_NOT_FOUND", "Staff assignment not found.", 404)
+    record_audit(session, actor_id=owner.id, action="staff.unassigned", entity_type="staff_assignment", entity_id=assignment.id,
+                 club_id=club_id, details={"staff_user_id": str(staff_user_id)})
     await session.delete(assignment)
     remaining = await session.scalar(
         select(func.count()).select_from(StaffAssignment).where(StaffAssignment.staff_user_id == staff_user_id, StaffAssignment.id != assignment.id)
@@ -306,6 +517,65 @@ async def remove_staff(session: AsyncSession, owner: User, club_id: uuid.UUID, s
     staff = await session.get(User, staff_user_id)
     if staff is not None and remaining == 0 and staff.role == UserRole.STAFF:
         staff.role = UserRole.USER
+    await session.commit()
+
+
+async def create_staff_shift(session: AsyncSession, owner: User, club_id: uuid.UUID, payload: StaffShiftCreate) -> StaffShift:
+    club = await _owned_club(session, owner, club_id)
+    now = datetime.now(timezone.utc)
+    if payload.start_time <= now:
+        raise ServiceError("SHIFT_IN_PAST", "A shift must start in the future.", 422)
+    staff = await session.scalar(
+        select(User).join(StaffAssignment, StaffAssignment.staff_user_id == User.id)
+        .where(StaffAssignment.club_id == club.id, func.lower(User.email) == str(payload.staff_email).lower(), User.is_active.is_(True))
+    )
+    if staff is None:
+        raise ServiceError("STAFF_NOT_ASSIGNED", "Assign this staff member to the club before scheduling a shift.", 422)
+    shift = StaffShift(club_id=club.id, staff_user_id=staff.id, created_by_user_id=owner.id,
+                       start_time=payload.start_time, end_time=payload.end_time)
+    session.add(shift)
+    try:
+        await session.flush()
+        record_audit(session, actor_id=owner.id, action="staff.shift_created", entity_type="staff_shift", entity_id=shift.id,
+                     club_id=club.id, details={"staff_user_id": str(staff.id), "start_time": payload.start_time.isoformat(), "end_time": payload.end_time.isoformat()})
+        await session.commit()
+    except IntegrityError as error:
+        await session.rollback()
+        raise ServiceError("STAFF_SHIFT_CONFLICT", "This staff member already has an overlapping shift.", 409) from error
+    return await session.scalar(
+        select(StaffShift).where(StaffShift.id == shift.id).options(joinedload(StaffShift.club), joinedload(StaffShift.staff_user))
+    )
+
+
+async def owner_staff_shifts(session: AsyncSession, owner: User, limit: int = 100) -> list[StaffShift]:
+    return list(await session.scalars(
+        select(StaffShift).join(Club, StaffShift.club_id == Club.id)
+        .where(Club.owner_id == owner.id)
+        .options(joinedload(StaffShift.club), joinedload(StaffShift.staff_user))
+        .order_by(StaffShift.start_time.desc()).limit(limit)
+    ))
+
+
+async def staff_shifts(session: AsyncSession, staff: User, limit: int = 100) -> list[StaffShift]:
+    club_ids = await _staff_club_ids(session, staff)
+    if not club_ids:
+        return []
+    return list(await session.scalars(
+        select(StaffShift).where(StaffShift.staff_user_id == staff.id, StaffShift.club_id.in_(club_ids))
+        .options(joinedload(StaffShift.club), joinedload(StaffShift.staff_user))
+        .order_by(StaffShift.start_time).limit(limit)
+    ))
+
+
+async def delete_staff_shift(session: AsyncSession, owner: User, shift_id: uuid.UUID) -> None:
+    shift = await session.scalar(
+        select(StaffShift).join(Club, StaffShift.club_id == Club.id)
+        .where(StaffShift.id == shift_id, Club.owner_id == owner.id).with_for_update(of=StaffShift)
+    )
+    if shift is None:
+        raise ServiceError("STAFF_SHIFT_NOT_FOUND", "Shift not found in your clubs.", 404)
+    record_audit(session, actor_id=owner.id, action="staff.shift_cancelled", entity_type="staff_shift", entity_id=shift.id, club_id=shift.club_id)
+    await session.delete(shift)
     await session.commit()
 
 
@@ -432,7 +702,7 @@ async def staff_session_action(
     if action == "start":
         await bookings.start_session(session, booking, staff, computer)
     elif action == "extend" and extension is not None:
-        await bookings.extend_session(session, booking, extension)
+        await bookings.extend_session(session, booking, extension, staff)
     elif action == "end":
         await bookings.end_session(session, booking, staff, computer)
     else:
@@ -508,7 +778,7 @@ async def admin_users(session: AsyncSession, page: int = 1, page_size: int = 50)
     )
 
 
-async def admin_update_user(session: AsyncSession, user_id: uuid.UUID, payload: UserActiveUpdate) -> User:
+async def admin_update_user(session: AsyncSession, admin: User, user_id: uuid.UUID, payload: UserActiveUpdate) -> User:
     user = await session.get(User, user_id)
     if user is None:
         raise ServiceError("USER_NOT_FOUND", "User not found.", 404)
@@ -516,7 +786,10 @@ async def admin_update_user(session: AsyncSession, user_id: uuid.UUID, payload: 
         active_admins = await session.scalar(select(func.count()).select_from(User).where(User.role == UserRole.ADMIN, User.is_active.is_(True)))
         if active_admins <= 1:
             raise ServiceError("LAST_ADMIN", "The last active administrator cannot be suspended.", 409)
+    was_active = user.is_active
     user.is_active = payload.is_active
+    record_audit(session, actor_id=admin.id, action="user.status_changed", entity_type="user", entity_id=user.id,
+                 details={"from": was_active, "to": user.is_active})
     await session.commit()
     await session.refresh(user)
     return user
@@ -526,20 +799,23 @@ async def admin_clubs(session: AsyncSession) -> list[Club]:
     return list(await session.scalars(select(Club).options(selectinload(Club.computers), selectinload(Club.tariffs)).order_by(Club.name).limit(500)))
 
 
-async def admin_update_club(session: AsyncSession, club_id: uuid.UUID, payload: ClubUpdate) -> Club:
+async def admin_update_club(session: AsyncSession, admin: User, club_id: uuid.UUID, payload: ClubUpdate) -> Club:
     club = await session.get(Club, club_id)
     if club is None:
         raise ServiceError("CLUB_NOT_FOUND", "Club not found.", 404)
     if payload.model_fields_set - {"is_active"}:
         raise ServiceError("ADMIN_STATUS_ONLY", "This endpoint only changes whether a club is active.", 422)
+    was_active = club.is_active
     club.is_active = payload.is_active if payload.is_active is not None else club.is_active
+    record_audit(session, actor_id=admin.id, action="club.status_changed", entity_type="club", entity_id=club.id, club_id=club.id,
+                 details={"from": was_active, "to": club.is_active})
     await session.commit()
     await session.refresh(club)
     return club
 
 
 async def admin_update_computer_status(
-    session: AsyncSession, computer_id: uuid.UUID, payload: ComputerStatusUpdate
+    session: AsyncSession, admin: User, computer_id: uuid.UUID, payload: ComputerStatusUpdate
 ) -> Computer:
     computer = await session.scalar(select(Computer).where(Computer.id == computer_id).with_for_update())
     if computer is None:
@@ -550,7 +826,10 @@ async def admin_update_computer_status(
         await _ensure_no_live_booking(session, computer.id)
     else:
         await _ensure_no_active_session(session, computer.id)
+    previous_status = computer.status
     computer.status = payload.status
+    record_audit(session, actor_id=admin.id, action="computer.status_changed", entity_type="computer", entity_id=computer.id,
+                 club_id=computer.club_id, details={"from": previous_status.value, "to": payload.status.value})
     await session.commit()
     await session.refresh(computer)
     return computer
@@ -571,7 +850,23 @@ async def admin_update_booking_status(
     elif payload.status == BookingStatus.COMPLETED:
         await bookings.end_session(session, booking, admin, computer)
     else:
+        if payload.status in (BookingStatus.CANCELLED, BookingStatus.EXPIRED):
+            refund_eligible = (
+                payload.status == BookingStatus.CANCELLED
+                and booking.start_time - datetime.now(timezone.utc) >= timedelta(hours=booking.refund_cutoff_hours)
+            )
+            await payments.handle_booking_cancellation(session, booking, refund_eligible=refund_eligible)
+            await bookings.release_promo_quota(session, booking)
+            await bookings.release_membership_credits(session, booking)
+            await bookings.cancel_booking_reminders(session, booking.id)
+        record_audit(session, actor_id=admin.id, action="booking.status_changed", entity_type="booking", entity_id=booking.id,
+                     club_id=computer.club_id, details={"to": payload.status.value})
         transition_booking(booking, payload.status)
+        if payload.status == BookingStatus.CANCELLED:
+            await bookings.notify_waitlist_for_slot(
+                session, club_id=computer.club_id, computer_id=computer.id,
+                start_time=booking.start_time, end_time=booking.end_time,
+            )
         await session.commit()
     await session.refresh(booking, attribute_names=["user", "computer"])
     await session.refresh(booking.computer, attribute_names=["club"])

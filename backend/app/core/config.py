@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr = SecretStr("development-only-change-this-secret")
     jwt_access_token_expire_minutes: int = Field(default=20, ge=1, le=1440)
     jwt_refresh_token_expire_days: int = Field(default=14, ge=1, le=90)
+    rate_limit_per_minute: int = Field(default=120, ge=10, le=10000)
+    auth_rate_limit_per_minute: int = Field(default=8, ge=1, le=1000)
+    frontend_base_url: str = "http://localhost:6006"
     cors_origins: str = "http://localhost,http://localhost:6006"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

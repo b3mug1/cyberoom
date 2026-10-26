@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
-from app.dependencies import get_current_user
-from app.models import Booking, Club, Computer, Tariff, User
+from app.dependencies import get_current_user, get_optional_user
+from app.models import Booking, Club, Computer, Membership, MembershipPlan, Notification, Payment, Review, Tariff, User, WaitlistEntry
 from app.core.config import get_settings
-from app.schemas import AccessToken, BookingCreate, BookingQuoteResponse, BookingResponse, ClubAvailability, ClubPage, ClubResponse, UserCreate, UserLogin, UserResponse
-from app.services import auth, bookings
+from app.schemas import AccessToken, BookingCreate, BookingQuoteResponse, BookingReschedule, BookingResponse, ClubAvailability, ClubPage, ClubResponse, ClubReviewResponse, MembershipPlanResponse, MembershipResponse, NotificationResponse, PaymentResponse, ReviewCreate, ReviewResponse, UserCreate, UserLogin, UserResponse, WaitlistCreate, WaitlistResponse
+from app.services import auth, bookings, notifications, payments, waitlist
 from app.services.errors import ServiceError
 
 router = APIRouter()
@@ -125,6 +125,21 @@ async def get_club_availability(
     return await bookings.club_availability(session, club_id, start_time, end_time)
 
 
+@router.get("/clubs/{club_id}/reviews", response_model=list[ClubReviewResponse])
+async def list_club_reviews(club_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> list[Review]:
+    return await bookings.list_club_reviews(session, club_id)
+
+
+@router.get("/clubs/{club_id}/membership-plans", response_model=list[MembershipPlanResponse])
+async def list_club_membership_plans(club_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> list[MembershipPlan]:
+    club = await session.get(Club, club_id)
+    if club is None or not club.is_active:
+        raise ServiceError("CLUB_NOT_FOUND", "Club not found.", 404)
+    return list(await session.scalars(
+        select(MembershipPlan).where(MembershipPlan.club_id == club_id, MembershipPlan.is_active.is_(True)).order_by(MembershipPlan.price)
+    ))
+
+
 @router.post("/bookings", response_model=BookingResponse, status_code=201)
 async def create_booking(
     payload: BookingCreate,
@@ -134,9 +149,67 @@ async def create_booking(
     return await bookings.create_booking(session, user, payload)
 
 
+@router.post("/bookings/{booking_id}/payment", response_model=PaymentResponse, status_code=201)
+async def create_booking_payment(
+    booking_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Payment:
+    return await payments.start_booking_checkout(session, user, booking_id)
+
+
+@router.get("/payments/{payment_id}", response_model=PaymentResponse)
+async def get_payment_status(
+    payment_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Payment:
+    return await payments.get_user_payment(session, user, payment_id)
+
+
+@router.post("/membership-plans/{plan_id}/checkout", response_model=PaymentResponse, status_code=201)
+async def create_membership_payment(
+    plan_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Payment:
+    return await payments.start_membership_checkout(session, user, plan_id)
+
+
+@router.get("/memberships", response_model=list[MembershipResponse])
+async def list_user_memberships(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[MembershipResponse]:
+    rows = await session.scalars(
+        select(Membership).where(Membership.user_id == user.id)
+        .options(selectinload(Membership.plan), selectinload(Membership.club))
+        .order_by(Membership.expires_at.desc()).limit(100)
+    )
+    return [MembershipResponse(
+        id=item.id, club_id=item.club_id, club_name=item.club.name, plan_name=item.plan.name,
+        total_minutes=item.total_minutes, remaining_minutes=item.remaining_minutes,
+        starts_at=item.starts_at, expires_at=item.expires_at,
+    ) for item in rows]
+
+
 @router.post("/bookings/quote", response_model=BookingQuoteResponse)
-async def quote_booking(payload: BookingCreate, session: AsyncSession = Depends(get_session)) -> BookingQuoteResponse:
-    return BookingQuoteResponse(total_price=await bookings.quote_booking(session, payload))
+async def quote_booking(
+    payload: BookingCreate,
+    user: User | None = Depends(get_optional_user),
+    session: AsyncSession = Depends(get_session),
+) -> BookingQuoteResponse:
+    return await bookings.quote_booking(session, payload, user)
+
+
+@router.patch("/bookings/{booking_id}/reschedule", response_model=BookingResponse)
+async def reschedule_booking(
+    booking_id: uuid.UUID,
+    payload: BookingReschedule,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Booking:
+    return await bookings.reschedule_booking(session, user, booking_id, payload)
 
 
 @router.get("/bookings", response_model=list[BookingResponse])
@@ -154,6 +227,68 @@ async def get_booking(
     session: AsyncSession = Depends(get_session),
 ) -> Booking:
     return await bookings.get_booking(session, user, booking_id)
+
+
+@router.get("/bookings/{booking_id}/review", response_model=ReviewResponse | None)
+async def get_booking_review(
+    booking_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ReviewResponse | None:
+    return await bookings.get_booking_review(session, user, booking_id)
+
+
+@router.post("/bookings/{booking_id}/review", response_model=ReviewResponse, status_code=201)
+async def create_booking_review(
+    booking_id: uuid.UUID,
+    payload: ReviewCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Review:
+    return await bookings.create_review(session, user, booking_id, payload)
+
+
+@router.get("/notifications", response_model=list[NotificationResponse])
+async def list_user_notifications(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[Notification]:
+    return await notifications.list_notifications(session, user.id)
+
+
+@router.patch("/notifications/{notification_id}/read", response_model=NotificationResponse)
+async def mark_user_notification_read(
+    notification_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Notification:
+    return await notifications.mark_notification_read(session, user.id, notification_id)
+
+
+@router.get("/waitlist", response_model=list[WaitlistResponse])
+async def list_user_waitlist(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[WaitlistEntry]:
+    return await waitlist.list_waitlist_entries(session, user)
+
+
+@router.post("/waitlist", response_model=WaitlistResponse, status_code=201)
+async def create_user_waitlist(
+    payload: WaitlistCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> WaitlistEntry:
+    return await waitlist.create_waitlist_entry(session, user, payload)
+
+
+@router.delete("/waitlist/{entry_id}", response_model=WaitlistResponse)
+async def cancel_user_waitlist(
+    entry_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> WaitlistEntry:
+    return await waitlist.cancel_waitlist_entry(session, user, entry_id)
 
 
 @router.post("/bookings/{booking_id}/cancel", response_model=BookingResponse)

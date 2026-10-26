@@ -1,16 +1,18 @@
 import uuid
+from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.dependencies import get_current_user, require_roles
-from app.models import BookingStatus, StaffAssignment, User, UserRole
+from app.models import AuditLog, BookingStatus, MembershipPlan, PromoCode, StaffAssignment, StaffShift, User, UserRole
 from app.schemas import (
     AccessToken,
     AdminBookingStatusUpdate,
     AdminDashboard,
+    AuditLogResponse,
     BookingResponse,
     ClubCreate,
     ClubResponse,
@@ -21,12 +23,21 @@ from app.schemas import (
     ComputerUpdate,
     ManagedClubResponse,
     OwnerDashboard,
+    OwnerReport,
+    MembershipPlanCreate,
+    MembershipPlanResponse,
+    MembershipPlanStatusUpdate,
+    PromoCodeCreate,
+    PromoCodeResponse,
+    PromoCodeStatusUpdate,
     QRVerifyRequest,
     StaffAssignmentCreate,
     StaffBookingResponse,
     StaffDashboard,
     StaffComputerResponse,
     StaffMemberResponse,
+    StaffShiftCreate,
+    StaffShiftResponse,
     SessionExtend,
     TariffCreate,
     TariffResponse,
@@ -45,6 +56,100 @@ async def owner_dashboard(
     user: User = Depends(require_roles(UserRole.OWNER)), session: AsyncSession = Depends(get_session)
 ) -> OwnerDashboard:
     return await role_workflows.owner_dashboard(session, user)
+
+
+@router.get("/owner/reports", response_model=OwnerReport)
+async def owner_reports(
+    start_date: date,
+    end_date: date,
+    user: User = Depends(require_roles(UserRole.OWNER)),
+    session: AsyncSession = Depends(get_session),
+) -> OwnerReport:
+    return await role_workflows.owner_report(session, user, start_date, end_date)
+
+
+@router.get("/owner/audit", response_model=list[AuditLogResponse])
+async def owner_audit(
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(require_roles(UserRole.OWNER)),
+    session: AsyncSession = Depends(get_session),
+) -> list[AuditLog]:
+    return await role_workflows.owner_audit(session, user, limit)
+
+
+@router.get("/owner/promo-codes", response_model=list[PromoCodeResponse])
+async def list_owner_promo_codes(
+    user: User = Depends(require_roles(UserRole.OWNER)), session: AsyncSession = Depends(get_session),
+) -> list[PromoCode]:
+    return await role_workflows.owner_promo_codes(session, user)
+
+
+@router.post("/owner/clubs/{club_id}/promo-codes", response_model=PromoCodeResponse, status_code=201)
+async def create_owner_promo_code(
+    club_id: uuid.UUID, payload: PromoCodeCreate,
+    user: User = Depends(require_roles(UserRole.OWNER)), session: AsyncSession = Depends(get_session),
+) -> PromoCode:
+    return await role_workflows.create_promo_code(session, user, club_id, payload)
+
+
+@router.patch("/owner/promo-codes/{promo_id}", response_model=PromoCodeResponse)
+async def update_owner_promo_code(
+    promo_id: uuid.UUID, payload: PromoCodeStatusUpdate,
+    user: User = Depends(require_roles(UserRole.OWNER)), session: AsyncSession = Depends(get_session),
+) -> PromoCode:
+    return await role_workflows.set_promo_code_status(session, user, promo_id, payload)
+
+
+@router.get("/owner/membership-plans", response_model=list[MembershipPlanResponse])
+async def list_owner_membership_plans(
+    user: User = Depends(require_roles(UserRole.OWNER)), session: AsyncSession = Depends(get_session),
+) -> list[MembershipPlan]:
+    return await role_workflows.owner_membership_plans(session, user)
+
+
+@router.post("/owner/clubs/{club_id}/membership-plans", response_model=MembershipPlanResponse, status_code=201)
+async def create_owner_membership_plan(
+    club_id: uuid.UUID, payload: MembershipPlanCreate,
+    user: User = Depends(require_roles(UserRole.OWNER)), session: AsyncSession = Depends(get_session),
+) -> MembershipPlan:
+    return await role_workflows.create_membership_plan(session, user, club_id, payload)
+
+
+@router.patch("/owner/membership-plans/{plan_id}", response_model=MembershipPlanResponse)
+async def update_owner_membership_plan(
+    plan_id: uuid.UUID, payload: MembershipPlanStatusUpdate,
+    user: User = Depends(require_roles(UserRole.OWNER)), session: AsyncSession = Depends(get_session),
+) -> MembershipPlan:
+    return await role_workflows.set_membership_plan_status(session, user, plan_id, payload)
+
+
+@router.get("/owner/shifts", response_model=list[StaffShiftResponse])
+async def list_owner_shifts(
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(require_roles(UserRole.OWNER)),
+    session: AsyncSession = Depends(get_session),
+) -> list[StaffShift]:
+    return await role_workflows.owner_staff_shifts(session, user, limit)
+
+
+@router.post("/owner/clubs/{club_id}/shifts", response_model=StaffShiftResponse, status_code=201)
+async def create_owner_shift(
+    club_id: uuid.UUID,
+    payload: StaffShiftCreate,
+    user: User = Depends(require_roles(UserRole.OWNER)),
+    session: AsyncSession = Depends(get_session),
+) -> StaffShift:
+    return await role_workflows.create_staff_shift(session, user, club_id, payload)
+
+
+@router.delete("/owner/shifts/{shift_id}", status_code=204)
+async def delete_owner_shift(
+    shift_id: uuid.UUID,
+    user: User = Depends(require_roles(UserRole.OWNER)),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    await role_workflows.delete_staff_shift(session, user, shift_id)
+    return Response(status_code=204)
 
 
 @router.get("/owner/clubs", response_model=list[ClubResponse])
@@ -190,6 +295,15 @@ async def list_staff_computers(
     return await role_workflows.staff_computers(session, user)
 
 
+@router.get("/staff/shifts", response_model=list[StaffShiftResponse])
+async def list_staff_shifts(
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(require_roles(UserRole.STAFF)),
+    session: AsyncSession = Depends(get_session),
+) -> list[StaffShift]:
+    return await role_workflows.staff_shifts(session, user, limit)
+
+
 @router.post("/staff/bookings/verify-qr", response_model=StaffBookingResponse)
 async def verify_staff_qr(
     payload: QRVerifyRequest,
@@ -272,6 +386,15 @@ async def admin_dashboard(
     return await role_workflows.admin_dashboard(session)
 
 
+@router.get("/admin/audit", response_model=list[AuditLogResponse])
+async def admin_audit(
+    limit: int = Query(default=100, ge=1, le=500),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+) -> list[AuditLog]:
+    return await role_workflows.admin_audit(session, limit)
+
+
 @router.get("/admin/users", response_model=list[UserAdminResponse])
 async def list_admin_users(
     page: int = Query(default=1, ge=1),
@@ -286,10 +409,10 @@ async def list_admin_users(
 async def update_admin_user_status(
     user_id: uuid.UUID,
     payload: UserActiveUpdate,
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await role_workflows.admin_update_user(session, user_id, payload)
+    return await role_workflows.admin_update_user(session, admin, user_id, payload)
 
 
 @router.get("/admin/clubs", response_model=list[ManagedClubResponse])
@@ -303,10 +426,10 @@ async def list_admin_clubs(
 async def update_admin_club_status(
     club_id: uuid.UUID,
     payload: ClubUpdate,
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await role_workflows.admin_update_club(session, club_id, payload)
+    return await role_workflows.admin_update_club(session, admin, club_id, payload)
 
 
 @router.get("/admin/bookings", response_model=list[StaffBookingResponse])
@@ -320,10 +443,10 @@ async def list_admin_bookings(
 async def update_admin_computer_status(
     computer_id: uuid.UUID,
     payload: ComputerStatusUpdate,
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await role_workflows.admin_update_computer_status(session, computer_id, payload)
+    return await role_workflows.admin_update_computer_status(session, admin, computer_id, payload)
 
 
 @router.patch("/admin/bookings/{booking_id}/status", response_model=StaffBookingResponse)

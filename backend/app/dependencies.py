@@ -32,6 +32,15 @@ async def get_current_user(
     return user
 
 
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    session: AsyncSession = Depends(get_session),
+) -> User | None:
+    if credentials is None:
+        return None
+    return await get_current_user(credentials, session)
+
+
 def require_roles(*roles: UserRole) -> Callable:
     async def check_role(user: User = Depends(get_current_user)) -> User:
         if user.role not in roles:

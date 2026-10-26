@@ -5,13 +5,15 @@ from fastapi.responses import JSONResponse
 from app.api.routes import router
 from app.api.role_routes import router as role_router
 from app.core.config import get_settings
-from app.db import engine
+from app.db import engine, redis_client
+from app.middleware.rate_limit import RateLimitMiddleware
 from app.services.errors import ServiceError
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="Cyberoom API", version="0.1.0", debug=settings.app_debug)
+    app.add_middleware(RateLimitMiddleware, redis_client=redis_client, settings=settings)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
@@ -36,6 +38,7 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     async def shutdown() -> None:
+        await redis_client.aclose()
         await engine.dispose()
 
     return app

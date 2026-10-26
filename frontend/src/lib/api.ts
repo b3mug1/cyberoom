@@ -1,4 +1,4 @@
-import type { Booking, Club, ClubPage } from "@/types/api";
+import type { Booking, Club, ClubPage, ClubReview, Membership, MembershipPlan, UserNotification, WaitlistRequest } from "@/types/api";
 import { clearAccessToken, saveAccessToken } from "@/lib/auth-session";
 
 const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
@@ -36,10 +36,34 @@ export async function getClub(clubId: string): Promise<Club> {
   return response.json() as Promise<Club>;
 }
 
+export async function getClubReviews(clubId: string): Promise<ClubReview[]> {
+  const response = await fetch(`${apiBase}/clubs/${clubId}/reviews`, { cache: "no-store" });
+  if (!response.ok) throw new Error("We couldn't load club reviews.");
+  return response.json() as Promise<ClubReview[]>;
+}
+
+export async function getClubMembershipPlans(clubId: string): Promise<MembershipPlan[]> {
+  const response = await fetch(`${apiBase}/clubs/${clubId}/membership-plans`, { cache: "no-store" });
+  if (!response.ok) throw new Error("We couldn't load membership plans.");
+  return response.json() as Promise<MembershipPlan[]>;
+}
+
+export async function getMemberships(accessToken: string): Promise<Membership[]> {
+  return authenticatedRequest<Membership[]>("/memberships", accessToken, "GET");
+}
+
 export async function getBookings(accessToken: string): Promise<Booking[]> {
   const response = await authenticatedFetch(`${apiBase}/bookings`, accessToken, { cache: "no-store" });
   if (!response.ok) throw new Error("We couldn't load your bookings. Please sign in again.");
   return response.json() as Promise<Booking[]>;
+}
+
+export async function getNotifications(accessToken: string): Promise<UserNotification[]> {
+  return authenticatedRequest<UserNotification[]>("/notifications", accessToken, "GET");
+}
+
+export async function getWaitlist(accessToken: string): Promise<WaitlistRequest[]> {
+  return authenticatedRequest<WaitlistRequest[]>("/waitlist", accessToken, "GET");
 }
 
 export async function getBooking(bookingId: string, accessToken: string): Promise<Booking> {

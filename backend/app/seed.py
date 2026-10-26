@@ -57,16 +57,16 @@ BRO_PRICE_MENU = {
 async def seed() -> None:
     async with SessionFactory() as session:
         demo_users = [
-            ("owner@example.com", "clubowner", "CyberBook Owner", UserRole.OWNER),
+            ("owner@example.com", "clubowner", "Cyberoom Owner", UserRole.OWNER),
             ("admin@example.com", "platformadmin", "Platform Admin", UserRole.ADMIN),
             ("player@example.com", "playerone", "Test Player", UserRole.USER),
-            ("staff@example.com", "clubstaff", "CyberBook Staff", UserRole.STAFF),
+            ("staff@example.com", "clubstaff", "Cyberoom Staff", UserRole.STAFF),
         ]
         users = {}
         for email, username, full_name, role in demo_users:
             account = await session.scalar(select(User).where(User.email == email))
             if account is None:
-                account = User(email=email, username=username, full_name=full_name, password_hash=hash_password("CyberBook!2026"), role=role)
+                account = User(email=email, username=username, full_name=full_name, password_hash=hash_password("Cyberoom!2026"), role=role)
                 session.add(account)
             users[role] = account
         await session.flush()

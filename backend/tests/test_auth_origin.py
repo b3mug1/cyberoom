@@ -18,7 +18,7 @@ def test_same_origin_refresh_cookie_request_is_allowed() -> None:
 
 def test_cross_site_refresh_cookie_request_is_rejected() -> None:
     with TestClient(app) as client:
-        client.cookies.set("cyberbook_refresh", "invalid")
+        client.cookies.set("cyberoom_refresh", "invalid")
         response = client.post(
             "/api/v1/auth/refresh",
             headers={"Origin": "https://attacker.example"},

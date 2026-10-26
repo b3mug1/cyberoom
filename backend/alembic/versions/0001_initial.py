@@ -1,4 +1,4 @@
-"""Initial CyberBook schema."""
+"""Initial Cyberoom schema."""
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql

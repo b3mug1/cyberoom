@@ -11,7 +11,7 @@ from app.services.errors import ServiceError
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="CyberBook API", version="0.1.0", debug=settings.app_debug)
+    app = FastAPI(title="Cyberoom API", version="0.1.0", debug=settings.app_debug)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,

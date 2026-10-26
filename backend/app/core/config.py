@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_env: str = "development"
     app_debug: bool = True
-    database_url: str = "postgresql+asyncpg://cyberbook:cyberbook@postgres:5432/cyberbook"
+    database_url: str = "postgresql+asyncpg://cyberoom:cyberoom@postgres:5432/cyberoom"
     redis_url: str = "redis://redis:6379/0"
     jwt_secret: SecretStr = SecretStr("development-only-change-this-secret")
     jwt_access_token_expire_minutes: int = Field(default=20, ge=1, le=1440)

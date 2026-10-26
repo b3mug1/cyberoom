@@ -33,7 +33,7 @@ async def login(payload: UserLogin, response: Response, session: AsyncSession = 
 
 @router.post("/auth/refresh", response_model=AccessToken)
 async def refresh(request: Request, response: Response, session: AsyncSession = Depends(get_session)) -> AccessToken:
-    token = request.cookies.get("cyberbook_refresh")
+    token = request.cookies.get("cyberoom_refresh")
     if not token:
         raise ServiceError("INVALID_REFRESH_TOKEN", "The refresh token is invalid or expired.", 401)
     _require_trusted_cookie_origin(request)
@@ -44,11 +44,11 @@ async def refresh(request: Request, response: Response, session: AsyncSession = 
 
 @router.post("/auth/logout", status_code=204)
 async def logout(request: Request, response: Response, session: AsyncSession = Depends(get_session)) -> None:
-    token = request.cookies.get("cyberbook_refresh")
+    token = request.cookies.get("cyberoom_refresh")
     if token:
         _require_trusted_cookie_origin(request)
         await auth.logout(session, token)
-    response.delete_cookie("cyberbook_refresh", path="/api/v1/auth", httponly=True, samesite="lax")
+    response.delete_cookie("cyberoom_refresh", path="/api/v1/auth", httponly=True, samesite="lax")
 
 
 def _require_trusted_cookie_origin(request: Request) -> None:
@@ -62,7 +62,7 @@ def _require_trusted_cookie_origin(request: Request) -> None:
 def _set_refresh_cookie(response: Response, token: str) -> None:
     settings = get_settings()
     response.set_cookie(
-        "cyberbook_refresh",
+        "cyberoom_refresh",
         token,
         max_age=settings.jwt_refresh_token_expire_days * 24 * 60 * 60,
         httponly=True,
